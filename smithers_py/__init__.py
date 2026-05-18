@@ -214,6 +214,16 @@ from .tools import (
     write as tool_write,
 )
 
+# Cache (task output caching with cache.by + version + schema signature)
+from .cache import (
+    Cache,
+    CacheHit,
+    CachePolicy,
+    CacheScope,
+    compute_cache_key,
+    compute_schema_signature,
+)
+
 # Scorers (eval hooks for task outputs)
 from .scorers import (
     AggregateScore,
@@ -393,6 +403,13 @@ __all__ = [
     'run_scorers_async',
     'schema_adherence_scorer',
     'toxicity_scorer',
+    # Cache
+    'Cache',
+    'CacheHit',
+    'CachePolicy',
+    'CacheScope',
+    'compute_cache_key',
+    'compute_schema_signature',
 ]
 
 __version__ = '1.0.0'

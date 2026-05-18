@@ -99,23 +99,39 @@ Memory + HTTP server + Scorers + Tool sandbox + Caching. After this,
 Understudy can run unattended against a real repo, gate auto-PRs on
 quality, and remember context across syncs.
 
-- [x] `smithers_py.memory` ✅ landed 2026-05-18. Working/messages/semantic
-      recall with 4 namespaces (workflow/agent/user/global), pluggable
-      embedding adapter (OpenAI `text-embedding-3-small` default,
-      `NullEmbeddingAdapter` for tests), TTL/TokenLimiter/Summarizer
-      processors. `ts_memory_facts` and `ts_memory_messages` SQLite
-      tables. 18 tests pass; all 724 existing tests still green.
-- [ ] `smithers_py.serve` (REST + SSE, mirrors the upstream
-      `startServer` surface; auth via bearer token)
-- [ ] `smithers_py.scorers` (schemaAdherence, latency, relevancy,
-      toxicity, faithfulness, llmJudge, createScorer + sampling)
-- [ ] `smithers_py.tools` (read/write/edit/grep/bash with path
-      containment, symlink rejection, output truncation, network block,
-      side-effect tracking + idempotency keys)
-- [ ] Task-level `cache.by` + version + schema-signature in
-      `runtime/runner.py` and persisted to `_smithers_cache`
+- [x] `smithers_py.memory` ✅ 2026-05-18. Working/messages/semantic
+      recall with 4 namespaces, pluggable embedding adapter (OpenAI
+      `text-embedding-3-small` default, `NullEmbeddingAdapter` for
+      tests), TTL/TokenLimiter/Summarizer processors. Tables:
+      `ts_memory_facts`, `ts_memory_messages`. 18 tests pass.
+- [x] `smithers_py.tools` ✅ 2026-05-18. Five built-ins
+      (read/write/edit/grep/bash) + `define_tool` factory. Path
+      containment via `resolve_sandboxed_path` (rejects relative
+      escapes, absolute paths outside root, symlink ancestor escapes).
+      Network policy via `check_network_policy` matching upstream
+      block list. Tool-call log persists to `ts_tool_calls`. 35 tests
+      pass.
+- [x] `smithers_py.scorers` ✅ 2026-05-18. Five scorers
+      (schema_adherence, latency, relevancy, toxicity, faithfulness)
+      + `llm_judge` + `create_scorer` factory. Three sampling modes
+      (all/ratio/none). `run_scorers_async` concurrent + error-isolated.
+      Persists to `ts_scores`. 27 tests pass.
+- [x] `smithers_py.cache` ✅ 2026-05-18. `CachePolicy` with `by(ctx)`
+      + `version` + schema signature. Three scopes (run/workflow/global).
+      TTL with lazy sweep. Persists to `ts_cache`. 18 tests pass.
+- [ ] `smithers_py.serve` (REST + SSE single-workflow Hono-equivalent
+      via FastAPI; mirrors upstream `createServeApp` surface)
 - [ ] Wire `memory={recall, remember, threadId}` into `TaskNode` so
       agents auto-recall + auto-persist (separate small task #71)
+- [ ] Wire `cache.by` policy enforcement into `runtime/runner.py`
+      (currently the cache module is built but not yet called from
+      the task execution path)
+
+**Phase 1 status**: 4 of 5 production essentials landed
+(memory + tools + scorers + cache). HTTP server is the last piece.
+
+**Test count**: 822 pass / 1 skip in the Python port test suite.
+Up from 724 baseline. Three new subsystems added 98 tests total.
 
 **Phase 2: differentiating capabilities (1.5 weeks)**
 
