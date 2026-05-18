@@ -1,19 +1,32 @@
 # wire_compat — Python ↔ TS cross-runtime parity contract
 
 The artifacts in this directory define **what it means for the Python
-port to be wire-compatible with TS Smithers**. The contract is a
-normalized JSON snapshot of output rows produced by running a canonical
-workflow.
+port to be wire-compatible with TS Smithers**. The contract is a pair
+of normalized JSON snapshots produced by running the same workflow
+through both runtimes; an empty diff between them is the parity
+assertion.
+
+**Status (2026-05-18):** ✅ **Parity achieved.** The Python `snapshot.json`
+and TS `ts_snapshot.json` are row-for-row identical for the canonical
+workflow. The `test_cross_runtime_row_set_diff` test asserts an empty
+diff and currently passes.
 
 ## The contract
 
 ```text
 examples/wire_compat/
-├── workflow.py            # Python workflow exercising every primitive
-├── snapshot.json          # Committed normalized row set
-├── snapshot_helpers.py    # normalize_rows() + diff_rows()
-├── generate_snapshot.py   # Regenerate snapshot.json
-└── test_wire_compat.py    # Regression test
+├── workflow.py             # Python workflow exercising every primitive
+├── workflow.tsx            # TS twin (runs in upstream smithers-orchestrator)
+├── child-workflow.tsx      # TS Subflow child
+├── schemas.ts              # Zod twins of the Pydantic schemas
+├── package.json            # TS deps (bun install)
+├── snapshot.json           # Committed Python normalized row set
+├── ts_snapshot.json        # Committed TS normalized row set (manually regen)
+├── snapshot_helpers.py     # normalize_rows() + diff_rows()
+├── generate_snapshot.py    # Regenerate Python snapshot.json
+├── extract_ts_snapshot.py  # Regenerate TS ts_snapshot.json from smithers.db
+├── test_wire_compat.py     # Python single-runtime regression
+└── test_cross_runtime.py   # Python ↔ TS cross-runtime parity
 ```
 
 The workflow exercises:
@@ -51,46 +64,48 @@ uv run python /Users/luis/smithers/examples/wire_compat/generate_snapshot.py
 git diff examples/wire_compat/snapshot.json
 ```
 
-### Cross-runtime parity (when a TS twin lands)
+### Cross-runtime parity (live)
 
-The future `workflow.tsx` twin would:
+```bash
+# 1. Run the TS twin via upstream smithers-orchestrator. Produces
+#    wire_compat.db with the per-schema output tables.
+cd /Users/luis/smithers/examples/wire_compat
+bun install
+rm -f wire_compat.db wire_compat.db-* 2>/dev/null
+./node_modules/.bin/smithers up workflow.tsx --run-id wire-compat-ts \
+  --input '{"workload":"snapshot","branch":true,"iterations":3}'
 
-1. Use upstream `smithers-orchestrator` to author the same graph shape
-   against the same Pydantic-equivalent Zod schemas.
-2. Run via `smithers up workflow.tsx` against a fresh `smithers.db`.
-3. Dump the per-schema output tables, normalize to the same `(node_id,
-   schema_version, output_name, iteration, payload)` shape.
-4. Apply the same `diff_rows` against `snapshot.json`.
+# 2. Extract the TS rows into ts_snapshot.json, filtered to the
+#    parent run (subflow child rows live in their own run id).
+python3 extract_ts_snapshot.py
 
-The two runtimes are wire-compatible iff that diff is empty.
+# 3. Regenerate the Python snapshot.
+cd /Users/luis/smithers/smithers_py
+uv run python /Users/luis/smithers/examples/wire_compat/generate_snapshot.py
 
-## What divergences are expected
+# 4. Cross-runtime diff.
+uv run python -m pytest /Users/luis/smithers/examples/wire_compat/test_cross_runtime.py -v
+```
 
-A few row-level differences are *acceptable* and don't break wire-compat:
+The two runtimes are wire-compatible iff that diff is empty. Today
+it is.
 
-- **Subflow row count.** Upstream's `<Subflow>` writes child rows under
-  the child's own run id; our Python `SubflowNode` does the same. At
-  the *parent* run's row table, only the terminal subflow output is
-  visible — and that's what the snapshot captures. The child's
-  intermediate rows are isolated by run id either way.
+## How parity was achieved (the journey)
 
-- **`smithers-py-approval-v0` schema version.** This is a synthetic
-  schema we use for the row written when an ApprovalGate resolves
-  (whether auto-pass, approved, or denied). Upstream uses its own
-  approval row format, but the *workflow-level* observable
-  (`gate.payload.approved`) matches. The snapshot pins the Python
-  side; the cross-runtime diff treats this row as an expected
-  divergence — to be unified before publish.
+Initial Python and TS runs diverged in five ways. Each got fixed:
 
-## What divergences are bugs
+| Divergence | Fix |
+| --- | --- |
+| Python emitted `node_id="main/seq-1"` etc.; TS emitted bare `node_id="seq-1"` | Dropped the `main/` prefix and the path-stack walking from the Python runner; `node.id` is now used as-is, matching TS's flat-id-within-a-run scheme. |
+| Python suffixed loop iterations into the `node_id` (`loop:loop/iter:0/loop-step`); TS reused the bare `node_id` with the `iteration` column incrementing | Threaded `iteration: int` through `_walk` so `LoopNode` writes N rows with the same `node_id` and `iteration=0..N-1`. |
+| Python wrapped Branch children with `branch:br/then/…`; TS was transparent | Branch now walks the chosen child directly with no path wrapper. |
+| Approval row had a synthetic `smithers-py-approval-v0` schema_version; TS used the bound output schema | Approval row now writes `{approved: bool, …}` with no synthetic schema_version, matching TS. |
+| TS extract initially over-included rows from the subflow child run | `extract_ts_snapshot.py` now filters by parent `run_id`, matching what the Python snapshot generator does on its side. |
 
-Everything else. Specifically:
+After these fixes the row sets are row-for-row identical.
 
-- Different `node_id` shape (path delimiter, suffix conventions).
-- Different `output_name` (the registered key from `createSmithers`).
-- Different `payload` content for a task that should be deterministic.
-- Different iteration count for a `LoopNode`.
-- A row missing on one side but present on the other.
+## What divergences will be bugs (going forward)
 
-The `diff_rows` helper emits these as one-line diagnostics so the
+Now that parity is the baseline, any future divergence is a bug. The
+`diff_rows` helper emits one-line diagnostics per divergence so the
 acceptance check tells you which row diverged and how.

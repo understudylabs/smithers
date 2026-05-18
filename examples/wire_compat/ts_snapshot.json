@@ -30,7 +30,7 @@
     "output_name": "approval",
     "iteration": 0,
     "payload": {
-      "approved": true
+      "approved": 1
     }
   },
   {

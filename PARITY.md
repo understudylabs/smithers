@@ -94,14 +94,15 @@ slice of the API surface most workflows actually use:
 - Retry policy with `NonRetryableError` (PR #132).
 - `up --resume --force` + SIGINT cancellation (PR #87).
 - CLI: `smithers-ts up | approve | deny | inspect | ps`.
-- 37 runtime tests + 35 schema/facade tests + 2 wire-compat snapshot
-  tests, **707 total passing** (was 645 at python-branch-freeze;
-  +62 new tests, zero regressions).
-- Wire-compat acceptance contract defined at
-  [`examples/wire_compat/`](examples/wire_compat/) — canonical 11-node
-  workflow + 12-row normalized snapshot + diff harness. Future TS-side
-  snapshot drops into the same `diff_rows` pipeline; an empty diff is
-  the parity assertion.
+- 37 runtime tests + 35 schema/facade tests + 5 wire-compat tests
+  (2 single-runtime + 3 cross-runtime), **712 total passing**
+  (was 645 at python-branch-freeze; +67 new tests, zero regressions).
+- **Cross-runtime parity ACHIEVED.** Python and TS Smithers produce
+  identical normalized SQLite row sets for the canonical wire-compat
+  workflow. The acceptance test (`test_cross_runtime_row_set_diff`)
+  runs both runtimes and asserts an empty diff — currently green.
+  See [`examples/wire_compat/`](examples/wire_compat/) for the
+  workflow.py / workflow.tsx pair + diff harness.
 
 ## What "parity with current main" does NOT mean for v0.1
 

@@ -215,7 +215,7 @@ def run_workflow(
                 f"Workflow {workflow_name!r} must return a WorkflowNode, "
                 f"got {type(tree).__name__}"
             )
-        walk_result = _walk(tree, ctx, parent_path="main")
+        walk_result = _walk(tree, ctx)
     except WorkflowError as exc:
         error = {"message": str(exc), "node_id": exc.node_id}
         store.update_run_status(run_id, "failed", error=error)
@@ -272,68 +272,76 @@ def run_workflow(
 # ----- Walk -------------------------------------------------------------------
 
 
-def _walk(node: Any, ctx: _Ctx, parent_path: str) -> _WalkResult:
+def _walk(node: Any, ctx: _Ctx, iteration: int = 0) -> _WalkResult:
+    """Walk a node tree.
+
+    Wire-compat note: node ids are bare (no path stack, no ``main/``
+    prefix). Workflow authors are responsible for choosing globally
+    unique ids within a run. Subflow boundaries get their own ``run_id``
+    so inner ids don't collide with the parent.
+
+    ``iteration`` is the loop iteration index — threaded through so a
+    LoopNode iterating its body N times writes N rows under the same
+    node_id with iteration=0..N-1, matching TS Drizzle row shape.
+    """
     if isinstance(node, WorkflowNode):
-        return _walk_children(node.children, ctx, parent_path)
+        return _walk_children(node.children, ctx, iteration)
 
     if isinstance(node, SequenceNode):
-        return _walk_children(node.children, ctx, parent_path)
+        return _walk_children(node.children, ctx, iteration)
 
     if isinstance(node, ParallelNode):
-        # MVP: still sequential within a frame. Mark via a path suffix so
-        # node ids remain unique.
-        return _walk_children(node.children, ctx, parent_path)
+        # MVP: still sequential within a frame. Real concurrency is v0.2.
+        return _walk_children(node.children, ctx, iteration)
 
     if isinstance(node, (WorktreeNode, MergeQueueNode)):
         # Honor structurally; real VCS/queue semantics are a v0.2 concern.
-        return _walk_children(node.children, ctx, parent_path)
+        return _walk_children(node.children, ctx, iteration)
 
     if isinstance(node, TaskNode):
-        return _run_task(node, ctx, parent_path)
+        return _run_task(node, ctx, iteration)
 
     if isinstance(node, SubflowNode):
-        return _run_subflow(node, ctx, parent_path)
+        return _run_subflow(node, ctx)
 
     if isinstance(node, ApprovalGateNode):
-        return _run_approval_gate(node, ctx, parent_path)
+        return _run_approval_gate(node, ctx)
 
     if isinstance(node, HumanTaskNode):
-        return _run_human_task(node, ctx, parent_path)
+        return _run_human_task(node, ctx)
 
     if isinstance(node, BranchNode):
-        return _run_branch(node, ctx, parent_path)
+        return _run_branch(node, ctx, iteration)
 
     if isinstance(node, LoopNode):
-        return _run_loop(node, ctx, parent_path)
+        return _run_loop(node, ctx)
 
     # Anything else (existing v1.0.0 nodes) is treated as a pass-through
     # container for the MVP — walk children if any. Engine integration
     # for the v1.0.0 nodes is a separate piece of work.
     children = getattr(node, "children", [])
-    return _walk_children(children, ctx, parent_path)
+    return _walk_children(children, ctx, iteration)
 
 
 def _walk_children(
-    children: List[Any], ctx: _Ctx, parent_path: str
+    children: List[Any], ctx: _Ctx, iteration: int = 0
 ) -> _WalkResult:
     accumulated_pending: List[ApprovalRow] = []
     for child in children:
-        result = _walk(child, ctx, parent_path)
+        result = _walk(child, ctx, iteration)
         accumulated_pending.extend(result.pending_approvals)
         if result.paused:
             return _WalkResult(paused=True, pending_approvals=accumulated_pending)
     return _WalkResult(paused=False, pending_approvals=accumulated_pending)
 
 
-def _run_task(node: TaskNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
-    node_id = _node_id(parent_path, node.id)
+def _run_task(node: TaskNode, ctx: _Ctx, iteration: int = 0) -> _WalkResult:
+    node_id = node.id
 
-    # Resume: skip already-completed tasks.
-    existing = ctx.store.get_output_row(ctx.run_id, node_id)
+    # Resume: skip already-completed tasks at this iteration.
+    existing = ctx.store.get_output_row(ctx.run_id, node_id, iteration=iteration)
     if existing is not None:
         ctx._output_cache[node_id] = existing.payload
-        # Also cache under the bare task id so downstream ctx.output(id) hits.
-        ctx._output_cache[node.id] = existing.payload
         return _WalkResult()
 
     payload = _compute_with_retry(node, node_id)
@@ -348,9 +356,9 @@ def _run_task(node: TaskNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
         validated,
         schema_version=schema_version,
         output_name=output_name,
+        iteration=iteration,
     )
     ctx._output_cache[node_id] = validated
-    ctx._output_cache[node.id] = validated
     return _WalkResult()
 
 
@@ -421,18 +429,23 @@ def _compute_task_payload(node: TaskNode) -> Dict[str, Any]:
     )
 
 
-def _run_subflow(node: SubflowNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
-    node_id = _node_id(parent_path, node.id)
+def _run_subflow(node: SubflowNode, ctx: _Ctx) -> _WalkResult:
+    """Run a child workflow under its own ``run_id``.
 
-    # Subflow's child runs under its own run id so it has its own row set;
-    # the parent caches the terminal output keyed by node_id.
+    Matches TS: the child's own rows live under the child run_id
+    (``<parent>:child:<sub.id>:0``); the parent ALSO writes a single
+    subflow-output row in its run, keyed by the SubflowNode's
+    ``output_target``. The parent-level row is the subflow's terminal
+    output projected into the parent's output namespace.
+    """
+    node_id = node.id
+
     existing = ctx.store.get_output_row(ctx.run_id, node_id)
     if existing is not None:
         ctx._output_cache[node_id] = existing.payload
-        ctx._output_cache[node.id] = existing.payload
         return _WalkResult()
 
-    child_run_id = f"{ctx.run_id}::sub::{_safe_id(node.id)}"
+    child_run_id = f"{ctx.run_id}:child:{_safe_id(node.id)}:0"
     child_exists = ctx.store.get_run(child_run_id) is not None
     child_result = run_workflow(
         node.workflow,
@@ -457,7 +470,9 @@ def _run_subflow(node: SubflowNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
         )
 
     terminal = child_result.output or {}
-    schema_version = terminal.get("schema_version") if isinstance(terminal, dict) else None
+    schema_version = (
+        terminal.get("schema_version") if isinstance(terminal, dict) else None
+    )
     output_name = node.output_target.name if node.output_target else None
     ctx.store.insert_output_row(
         ctx.run_id,
@@ -467,30 +482,30 @@ def _run_subflow(node: SubflowNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
         output_name=output_name,
     )
     ctx._output_cache[node_id] = terminal
-    ctx._output_cache[node.id] = terminal
     return _WalkResult()
 
 
 def _run_approval_gate(
-    node: ApprovalGateNode, ctx: _Ctx, parent_path: str
+    node: ApprovalGateNode, ctx: _Ctx
 ) -> _WalkResult:
-    node_id = _node_id(parent_path, node.id)
+    node_id = node.id
     existing = ctx.store.get_approval(ctx.run_id, node_id)
 
     if existing is None:
         if not node.when:
-            # Gate condition false → auto-pass, persist a synthetic
-            # "auto-approved" output row.
-            payload = {"approved": True, "auto": True, "node_id": node.id}
+            # Gate condition false → auto-pass. Persist a minimal
+            # approval-shaped row matching the TS Drizzle approval row
+            # layout (``{approved: true}``) rather than our prior
+            # synthetic schema_version. Reduces cross-runtime drift.
+            payload = {"approved": True}
             ctx.store.insert_output_row(
                 ctx.run_id,
                 node_id,
                 payload,
-                schema_version="smithers-py-approval-v0",
+                schema_version=None,
                 output_name=node.output_target.name if node.output_target else None,
             )
             ctx._output_cache[node_id] = payload
-            ctx._output_cache[node.id] = payload
             return _WalkResult()
 
         # Gate fires — write a pending approval and pause.
@@ -517,12 +532,11 @@ def _run_approval_gate(
             f"(note={existing.note or ''!r}); workflow failed per on_deny='fail'",
             node_id=node_id,
         )
-    payload = {
-        "approved": approved,
-        "note": existing.note or "",
-        "decided_by": existing.decided_by or "",
-        "node_id": node.id,
-    }
+    payload = {"approved": approved}
+    if existing.note:
+        payload["note"] = existing.note
+    if existing.decided_by:
+        payload["decided_by"] = existing.decided_by
     if ctx.store.get_output_row(ctx.run_id, node_id) is None:
         ctx.store.insert_output_row(
             ctx.run_id,
@@ -532,38 +546,41 @@ def _run_approval_gate(
             output_name=node.output_target.name if node.output_target else None,
         )
     ctx._output_cache[node_id] = payload
-    ctx._output_cache[node.id] = payload
     return _WalkResult()
 
 
-def _run_branch(node: BranchNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
-    """Walk ``then_child`` when condition is True, ``else_child`` otherwise."""
-    if node.skip_if:
-        return _WalkResult()
-    branch_path = f"{parent_path}/branch:{_safe_id(node.key or 'br')}"
-    if node.condition:
-        return _walk(node.then_child, ctx, f"{branch_path}/then")
-    if node.else_child is not None:
-        return _walk(node.else_child, ctx, f"{branch_path}/else")
-    return _WalkResult()
+def _run_branch(node: BranchNode, ctx: _Ctx, iteration: int = 0) -> _WalkResult:
+    """Walk ``then_child`` when condition is True, ``else_child`` otherwise.
 
-
-def _run_loop(node: LoopNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
-    """Iterate ``children`` until ``until_fn(ctx)`` is True or max reached.
-
-    Each iteration writes child output rows under a unique node-id suffix
-    so resume can skip iterations whose rows already exist. The loop's
-    terminal status row is written by the engine — workflows that need a
-    loop-level output should append a final ``TaskNode`` after the loop.
+    Wire-compat: Branch is transparent. The chosen child's own node_id
+    appears in the output rows; there's no synthetic ``branch:...``
+    wrapper in the path. Matches TS upstream which renders only the
+    selected `<Branch>.{then,else}` child into the graph.
     """
     if node.skip_if:
         return _WalkResult()
-    loop_path = f"{parent_path}/loop:{_safe_id(node.id)}"
+    if node.condition:
+        return _walk(node.then_child, ctx, iteration)
+    if node.else_child is not None:
+        return _walk(node.else_child, ctx, iteration)
+    return _WalkResult()
+
+
+def _run_loop(node: LoopNode, ctx: _Ctx) -> _WalkResult:
+    """Iterate ``children`` until ``until_fn(ctx)`` is True or max reached.
+
+    Wire-compat: each iteration writes child output rows with the same
+    ``node_id`` but ``iteration=N``, matching the TS Drizzle row shape
+    (the ``iteration`` column is the loop counter). Resume skips already-
+    persisted (run_id, node_id, iteration) tuples.
+    """
+    if node.skip_if:
+        return _WalkResult()
+    loop_id = node.id
     accumulated_pending: List[ApprovalRow] = []
     until_fn = node.until_fn
     for i in range(node.max_iterations):
-        iter_path = f"{loop_path}/iter:{i}"
-        result = _walk_children(node.children, ctx, iter_path)
+        result = _walk_children(node.children, ctx, iteration=i)
         accumulated_pending.extend(result.pending_approvals)
         if result.paused:
             return _WalkResult(paused=True, pending_approvals=accumulated_pending)
@@ -572,17 +589,17 @@ def _run_loop(node: LoopNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
                 satisfied = bool(until_fn(ctx))
             except Exception as exc:
                 raise WorkflowError(
-                    f"LoopNode {node.id!r} until callable raised: {exc}",
-                    node_id=loop_path,
+                    f"LoopNode {loop_id!r} until callable raised: {exc}",
+                    node_id=loop_id,
                     cause=exc,
                 ) from exc
             if satisfied:
                 return _WalkResult(pending_approvals=accumulated_pending)
     if node.on_max_reached == "fail":
         raise WorkflowError(
-            f"LoopNode {node.id!r} exhausted {node.max_iterations} iterations "
+            f"LoopNode {loop_id!r} exhausted {node.max_iterations} iterations "
             "without satisfying `until`",
-            node_id=loop_path,
+            node_id=loop_id,
         )
     # on_max_reached == "return-last" — accept the final iteration as the
     # loop's terminal state and continue downstream.
@@ -590,9 +607,9 @@ def _run_loop(node: LoopNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
 
 
 def _run_human_task(
-    node: HumanTaskNode, ctx: _Ctx, parent_path: str
+    node: HumanTaskNode, ctx: _Ctx
 ) -> _WalkResult:
-    node_id = _node_id(parent_path, node.id)
+    node_id = node.id
     existing = ctx.store.get_approval(ctx.run_id, node_id)
     if existing is None:
         prompt_summary = str(node.prompt)[:240]
@@ -645,7 +662,6 @@ def _run_human_task(
             output_name=node.output_target.name if node.output_target else None,
         )
     ctx._output_cache[node_id] = payload
-    ctx._output_cache[node.id] = payload
     return _WalkResult()
 
 
@@ -738,7 +754,13 @@ def _safe_id(text: str) -> str:
 
 
 def _node_id(parent_path: str, local_id: Optional[str]) -> str:
-    return f"{parent_path}/{local_id or 'anon-' + uuid.uuid4().hex[:8]}"
+    """Legacy helper kept for backward-compat in case external code calls it.
+
+    The walker now uses bare ``node.id`` directly. Workflows that need
+    sub-scoping should use ``SubflowNode`` (which carves a child run_id
+    namespace) rather than relying on path prefixing.
+    """
+    return local_id or f"anon-{uuid.uuid4().hex[:8]}"
 
 
 def _resolve_schema(node: TaskNode):

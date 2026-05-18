@@ -71,6 +71,20 @@ class FinalOut(BaseModel):
     loop_iterations: int
 
 
+class ApprovalRow(BaseModel):
+    """Permissive approval shape matching TS's Drizzle approval row.
+
+    The TS Zod schema for the registered ``approval`` output is
+    ``z.object({approved: z.boolean()}).loose()`` — the wire-compat
+    contract is that an ApprovalGate's resolved row has at minimum
+    ``approved: bool``. Python mirrors that exactly.
+    """
+
+    model_config = {"extra": "allow"}
+
+    approved: bool
+
+
 # ----- Child workflow --------------------------------------------------------
 
 
@@ -113,6 +127,7 @@ CONFIG = create_smithers(
         "branch_step": StepOut,
         "loop_step": StepOut,
         "child_out": ChildOut,
+        "approval": ApprovalRow,
         "output": FinalOut,
     }
 )
@@ -191,6 +206,7 @@ def wire_compat_workflow(ctx) -> WorkflowNode:
                     # (snapshot stays deterministic).
                     ApprovalGateNode(
                         id="gate",
+                        output=outputs.approval,
                         when=False,
                         request=ApprovalRequest(title="auto-pass"),
                         on_deny="continue",
