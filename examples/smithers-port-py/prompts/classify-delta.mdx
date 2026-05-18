@@ -1,0 +1,32 @@
+## Classify upstream PR for the Python port
+
+You're triaging a merged upstream PR to decide how (or whether) it
+should be ported to `smithers_py`. Reply with exactly the JSON shape
+described in the schema; no surrounding prose.
+
+PR_NUMBER: {props.prNumber}
+PR_TITLE: {props.prTitle}
+PR_AUTHOR: {props.prAuthor}
+PR_URL: {props.prUrl}
+FILES_CHANGED: {props.filesChanged.join(", ")}
+LABELS: {props.labels.join(", ")}
+
+### Decision categories (`action`)
+
+- `port` — straightforward Python port (matching idiom)
+- `port-with-replacement` — port but replace TS-specific tooling (Zod
+  → Pydantic, drizzle-orm → SQLAlchemy, JSX → context manager)
+- `skip-v0` — out of scope for v0.1 (gateway/server/sandbox)
+- `skip-forever` — TS-only by nature (docs, `.d.ts`, bun init)
+- `already-ported` — we already cover this on `port/resume`
+
+### Hard rules
+
+- `packages/gateway*`, `packages/server`, `packages/sandbox`,
+  `packages/openapi`, `packages/devtools` → `skip-v0`.
+- Docs-only changes → `skip-forever`.
+- `.d.ts` files → `skip-forever`.
+
+### Confidence
+
+0-100 integer. < 60 → set `needsHumanReview: true`.

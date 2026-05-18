@@ -1,0 +1,33 @@
+## Translate upstream PR into Python port delta
+
+PR_NUMBER: {props.prNumber}
+PR_TITLE: {props.prTitle}
+PR_URL: {props.prUrl}
+PYTHON_TARGET: {props.pythonTarget}
+ACTION: {props.action}
+
+Apply the standard paradigm rules — Zod → Pydantic, drizzle-orm →
+SQLAlchemy or stdlib sqlite3, React reconciler → context manager,
+bun:sqlite → apsw / stdlib sqlite3, `ai` SDK → openai/anthropic
+Python SDKs.
+
+### Output
+
+Write or edit the Python file at `{props.pythonTarget}`. Don't modify
+any test fixture or upstream-TS file. After writing, return JSON:
+
+```json
+{
+  "prNumber": <int>,
+  "pythonTarget": "...",
+  "status": "drafted",
+  "diffPreview": "<≤200-line unified diff for the operator approval gate>",
+  "rsLoc": 0,
+  "pyLoc": <int>,
+  "notes": "",
+  "tokensUsed": <int>
+}
+```
+
+If you can't translate cleanly, set `status: "failed"` and explain why
+in `notes`.

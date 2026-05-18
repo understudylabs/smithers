@@ -1,0 +1,14 @@
+## Approve the smithers-port-py sync run
+
+You're being asked to approve a sync pass that will look at upstream
+PRs since `{props.sinceIso || "(initial)"}`, classify each, and
+optionally open Python port PRs back to `{props.forkBranch}`.
+
+UPSTREAM: {props.upstreamRepo}@{props.upstreamBranch}
+FORK: {props.forkRepo}@{props.forkBranch}
+EMIT_PRS: {props.emitPullRequests ? "yes" : "no"}
+MAX_CONCURRENCY: {props.maxConcurrency}
+
+Reply with `approved: true` to proceed. The downstream parity gate
+will still fire if the cross-runtime test diverges; this approval is
+just for kicking off the run.

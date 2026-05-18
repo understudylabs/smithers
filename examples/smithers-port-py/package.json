@@ -1,0 +1,21 @@
+{
+  "name": "smithers-port-py-sync",
+  "version": "0.0.0",
+  "description": "Smithers TS meta-workflow that watches upstream smithersai/smithers:main, classifies new commits as port/skip/N-A for the Python port, translates accepted deltas via real-mode agents, verifies via cross-runtime parity, and opens PRs against understudylabs/smithers:port/resume.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dry": "smithers up workflow.tsx --run-id port-sync-dry --input \"$(cat fixtures/input.smoke.json)\" --format json",
+    "real": "SMITHERS_PORT_PY_REAL_AGENTS=1 smithers up workflow.tsx --run-id port-sync --input \"$(cat fixtures/input.real.json)\" --format json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "smithers-orchestrator": "^0.20.1",
+    "zod": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.0.0",
+    "typescript": "~5.9.3"
+  }
+}

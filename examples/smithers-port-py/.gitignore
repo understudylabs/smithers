@@ -1,0 +1,9 @@
+node_modules/
+.tmp/
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+.smithers/
+events/
+bun.lockb

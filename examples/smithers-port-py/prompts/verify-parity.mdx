@@ -1,0 +1,30 @@
+## Run cross-runtime parity test
+
+PR_NUMBER: {props.prNumber}
+PYTHON_TARGET: {props.pythonTarget}
+WIRE_COMPAT_PATH: examples/wire_compat/
+
+Run the cross-runtime acceptance harness from the fork root:
+
+```bash
+cd /Users/luis/smithers/smithers_py
+uv run python -m pytest /Users/luis/smithers/examples/wire_compat -q
+```
+
+If the test passes, the Python port is wire-compatible with TS for
+the canonical workflow. Return:
+
+```json
+{
+  "passed": true,
+  "divergences": [],
+  "rowsCompared": 12,
+  "rowsEqual": 12,
+  "notes": ""
+}
+```
+
+If a diff appears, attach a categorized summary (use the same categories
+the test's `diff_rows` helper emits) and set `passed: false`. The next
+node is an ApprovalGate; an operator can choose whether to merge anyway
+or fail the port.
