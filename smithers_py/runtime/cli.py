@@ -487,6 +487,32 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     signal.set_defaults(func=cmd_signal)
 
+    supervise = sub.add_parser(
+        "supervise",
+        help="Poll for stale runs and auto-resume them",
+    )
+    supervise.add_argument("workflow_file", help="Path to a workflow file")
+    supervise.add_argument(
+        "--workflow", help="Workflow function name (multi-workflow modules)"
+    )
+    supervise.add_argument(
+        "--interval", default="10s",
+        help='Poll interval (e.g., "10s", "1m"). Default: 10s',
+    )
+    supervise.add_argument(
+        "--stale-threshold", default="30s",
+        help='Minimum staleness before resume (e.g., "30s", "2m"). Default: 30s',
+    )
+    supervise.add_argument(
+        "--max-concurrent", type=int, default=3,
+        help="Maximum runs resumed per poll. Default: 3",
+    )
+    supervise.add_argument(
+        "--dry-run", action="store_true",
+        help="Log what would be resumed without actually resuming",
+    )
+    supervise.set_defaults(func=cmd_supervise)
+
     return parser
 
 
@@ -508,6 +534,47 @@ def cmd_signal(args: argparse.Namespace) -> int:
         source="cli",
     )
     print(json.dumps(row.__dict__, indent=2, default=str))
+    return 0
+
+
+def cmd_supervise(args: argparse.Namespace) -> int:
+    """Poll for stale runs and auto-resume them."""
+    from .supervisor import Supervisor, parse_duration
+
+    module = _load_workflow_module(args.workflow_file)
+    workflow_fn = _resolve_workflow(module, args.workflow)
+
+    sup = Supervisor(
+        workflow_fn,
+        db_path=args.db,
+        interval_seconds=parse_duration(args.interval),
+        stale_threshold_seconds=parse_duration(args.stale_threshold),
+        max_concurrent=args.max_concurrent,
+        dry_run=args.dry_run,
+    )
+
+    # Graceful shutdown on SIGINT.
+    def _on_sigint(signum, frame):  # noqa: ARG001
+        sup.stop()
+        print("\n[supervisor] SIGINT received; stopping after current poll",
+              file=sys.stderr)
+
+    signal.signal(signal.SIGINT, _on_sigint)
+    try:
+        stats = sup.run()
+    finally:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+    print(
+        json.dumps(
+            {
+                "polls": stats.polls,
+                "resumed": stats.resumed,
+                "failed": stats.failed,
+                "skipped_no_workflow": stats.skipped_no_workflow,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

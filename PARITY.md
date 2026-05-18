@@ -19,8 +19,8 @@ needs a corresponding adjustment there.
 
 | # | Date | Title | Status | Notes |
 | --- | --- | --- | --- | --- |
-| 72 | 2026-02-13 | Add PI support | ⏳ Deferred (v0.3) | `AgentLike` protocol formalized; PiAgent adapter is a thin wrapper alongside other providers. |
-| 85 | 2026-02-18 | PiAgent JSON-mode NDJSON fix | ⏳ Deferred (v0.3) | Tied to #72. |
+| 72 | 2026-02-13 | Add PI support | ✅ Ported | `PiAgent` in `runtime/subprocess_agents.py`. Provider/mode/thinking/tools CLI args forwarded. |
+| 85 | 2026-02-18 | PiAgent JSON-mode NDJSON fix | ✅ Ported | `PiAgent._extract_output` parses NDJSON line-by-line and pulls the last assistant text. |
 | 87 | 2026-03-01 | `resume --force` + SIGINT cancellation | ✅ Ported | `run_workflow(..., force=True)`; CLI `--force` flag; SIGINT handler in `smithers-ts up` marks run cancelled. |
 | 88 | 2026-03-01 | Idle timeout for CLI agents | ✅ Ported | `TaskNode.timeout_ms` enforced via per-attempt `ThreadPoolExecutor` with `Future.result(timeout=)`. Rogue computes detached via `shutdown(wait=False)`. |
 | 89 | 2026-03-01 | `smithers graph` cyclic refs | ✅ Ported | `smithers-ts graph` command — tree / JSON / DOT formats. |
@@ -29,18 +29,18 @@ needs a corresponding adjustment there.
 | 94 | 2026-03-18 | docs: nested ralph | ➖ N/A | Docs-only. |
 | 109 | 2026-03-18 | Ralph loops respect approved reviews | ✅ Ported (Loop) | `LoopNode` with `until_fn` callable; Ralph is `TSRalphNode` alias. |
 | 113 | 2026-03-18 | Nested Loop/Ralph across structural nodes | ✅ Ported (Loop) | Each iteration is keyed by `(node_id, iteration)`; nesting works naturally. |
-| 114 | 2026-03-18 | Codex rollout recorder stderr tolerance | ⏳ Deferred (v0.3) | Codex agent adapter not yet shipped. |
-| 118 | 2026-03-27 | PiAgent RPC terminal-response wait | ⏳ Deferred (v0.3) | Tied to #72. |
-| 124 | 2026-04-16 | test: supervisor double-resume reproduction | ⏳ Deferred (v0.3) | Manual `--force` resume covers crash recovery; supervisor loop is ergonomic, not blocking. |
+| 114 | 2026-03-18 | Codex rollout recorder stderr tolerance | ✅ Ported | `CodexAgent` captures stderr but doesn't fail on it (treated as informational). |
+| 118 | 2026-03-27 | PiAgent RPC terminal-response wait | ✅ Ported | `PiAgent` reads the full NDJSON stream and uses the final `text`-bearing event. |
+| 124 | 2026-04-16 | test: supervisor double-resume reproduction | ✅ Ported | `Supervisor` serializes resumes via an in-process `threading.Lock` on `(run_id)` so two ticks can't both take over the same run. `smithers-ts supervise` CLI. |
 | 130 | 2026-05-04 | Duplicate output refs + SDK structured output + docs | ✅ Ported | `_Outputs` yields distinct `OutputRef` per key; structured-output handshake via Pydantic + the `AnthropicAgent` `output_schema=` plumbing. |
-| 125 | 2026-05-04 | OpenCodeAgent integration | ⏳ Deferred (v0.3) | `AgentLike` Protocol is in place; ~50 LOC subprocess wrapper. |
+| 125 | 2026-05-04 | OpenCodeAgent integration | ✅ Ported | `OpenCodeAgent` in `runtime/subprocess_agents.py`. |
 | 126 | 2026-05-04 | `bunx init` dependency resolution | ➖ N/A | TS init flow. |
 | 131 | 2026-04-27 | Restore green main baseline | ➖ N/A | Upstream maintenance. |
 | 132 | 2026-05-04 | Honor non-retryable agent failures | ✅ Ported | `NonRetryableError` short-circuits the retry loop. |
 | 133 | 2026-05-06 | Harden gateway client contracts | ➖ N/A | Gateway server skip-v0. |
 | 134 | 2026-05-10 | Harden gateway HTTP boundaries | ➖ N/A | Same. |
 | 137 | 2026-05-14 | `smithers init` .gitignore templates | ➖ N/A | TS init flow. |
-| 138 | 2026-05-14 | Codex/OpenAI agent fixes | ⏳ Deferred (v0.3) | Tied to deferred provider adapters. |
+| 138 | 2026-05-14 | Codex/OpenAI agent fixes | ✅ Ported | `CodexAgent` carries the upstream model/thinking flag conventions. |
 | 139 | 2026-05-18 | Fix doc URL | ➖ N/A | Docs only. |
 
 ## Open PRs
@@ -69,12 +69,13 @@ is a deliberate v0.1 simplification:
 
 ## Summary of catch-up state
 
-- **11 PRs fully ported** (#87, #88, #89, #92, #109, #113, #130, #132,
-  plus the original MVP surface from #91-ish era, plus Signal/
-  WaitForEvent semantics that don't map to a specific PR but are
-  upstream's documented v0.20 capability).
-- **6 PRs deferred** to v0.3 — every one is a provider adapter
-  (#72/#85/#114/#118/#125/#138) or the supervisor loop (#124).
+- **18 PRs fully ported.** All Tier-1 (engine/CLI behavior) and Tier-2
+  (agent adapters + supervisor) work from upstream's `main` since
+  2026-01-23 is now live.
+- **0 PRs deferred** at the PR level. The v0.4 backlog items (Effect
+  composition, observability mirror, gateway, HMR, time travel) are
+  forward-looking design areas that don't have specific upstream PRs
+  driving them yet.
 - **9 PRs N/A** — docs only or Bun/gateway-specific.
 - **1 open PR** (#135 observability) parked behind a "wait for upstream
   to ship" gate.
@@ -119,13 +120,26 @@ Most of the originally-deferred v0.2 items are now live:
 | `smithers-ts graph` command | ✅ Shipped | Renders the workflow DAG in indented-tree / JSON / Graphviz DOT format without executing. Closes the v0.1 gap on PR #89. |
 | `smithers-ts signal` CLI | ✅ Shipped | Delivers an external signal to a paused `WaitForEventNode`. |
 
-## What's still deferred (the v0.3 backlog)
+## v0.3 lift (2026-05-18) — final batch
 
-- The Effect API composition model on the Python side. (Possibly via `anyio` structured concurrency. Not strictly needed; current threading covers the bun-port shape.)
+The remaining originally-deferred items are now live:
+
+| v0.3 target | Status | Notes |
+| --- | --- | --- |
+| Provider adapters: Claude Code / Codex / OpenCode / Pi | ✅ Shipped | `SubprocessAgent` base in `runtime/subprocess_agents.py` handles common subprocess plumbing (spawn, timeout, JSON-fenced output extraction, stderr capture, working-directory). Four concrete subclasses: `ClaudeCodeAgent`, `CodexAgent`, `OpenCodeAgent`, `PiAgent`. PiAgent has NDJSON event-stream parsing (PR #85/#118). |
+| Supervisor loop | ✅ Shipped | `Supervisor` class in `runtime/supervisor.py`. Polls `ts_runs` for stale `'running'` rows and force-resumes them. Serialized per-run via an in-process lock. New `smithers-ts supervise <workflow.py> --interval 10s --stale-threshold 30s --max-concurrent 3` CLI. Closes PR #124. |
+
+## What's still deferred (the v0.4 backlog)
+
+These are intentional non-goals for the resume effort. None block any
+realistic workflow today.
+
+- The Effect API composition model on the Python side. (Possibly via `anyio` structured concurrency. Not strictly needed; current threading covers the bun-port shape and every other workflow we have.)
 - Canonical agent trace events (#135 — still draft upstream; mirror once it lands).
 - The gateway server / client / HTTP boundaries.
-- Provider adapters beyond Anthropic: Claude Code, Codex, OpenCode, Pi. All trivial implementers of the `AgentLike` Protocol; each is a 50–100 LOC class.
-- TS-shape **observability metrics** and the prometheus endpoint (low priority for first-party usage).
+- TS-shape **observability metrics** and the prometheus endpoint.
+- HMR (hot module replacement) for `.py` workflows during a live run.
+- Time-travel debugging (`smithers fork`, `smithers replay`, `smithers timeline` upstream commands). Our wire-compat row-shape parity lays the groundwork — a future implementation would replay rows directly from `ts_output_rows`.
 
 ## Bonus: bun-port-smithers fully ported (2026-05-18)
 

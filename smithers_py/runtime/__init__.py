@@ -21,6 +21,14 @@ the v1.0.0 engine continues to handle ``PhaseNode``/``StepNode``/``Ralph``/
 
 from .agents import AgentLike, AgentResult, AnthropicAgent, AsyncAgentLike, DryAgent
 from .prompts import PromptTemplate
+from .subprocess_agents import (
+    ClaudeCodeAgent,
+    CodexAgent,
+    OpenCodeAgent,
+    PiAgent,
+    SubprocessAgent,
+)
+from .supervisor import Supervisor, SupervisorStats, parse_duration
 from .runner import (
     NonRetryableError,
     RunResult,
@@ -40,9 +48,17 @@ __all__ = [
     "AgentResult",
     "AnthropicAgent",
     "AsyncAgentLike",
+    "ClaudeCodeAgent",
+    "CodexAgent",
     "DryAgent",
     "NonRetryableError",
+    "OpenCodeAgent",
+    "PiAgent",
     "PromptTemplate",
+    "SubprocessAgent",
+    "Supervisor",
+    "SupervisorStats",
+    "parse_duration",
     "RunResult",
     "RunStatus",
     "WorkflowError",
