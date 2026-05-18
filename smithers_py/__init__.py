@@ -32,6 +32,25 @@ from .nodes import (
     SmithersNode,
     EffectNode,
     ToolPolicy,
+    # TS-compatibility node shape (mirrors current TS main public components)
+    OutputRef,
+    ApprovalRequest,
+    WorkflowNode,
+    SequenceNode,
+    ParallelNode,
+    TaskNode,
+    SubflowNode,
+    ApprovalGateNode,
+    HumanTaskNode,
+    WorktreeNode,
+    MergeQueueNode,
+)
+
+# TS-compatible facade
+from .facade import (
+    SmithersConfig,
+    create_smithers,
+    createSmithers,
 )
 
 # Engine - tick loop and context

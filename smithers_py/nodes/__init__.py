@@ -13,6 +13,19 @@ from .control import WhileNode, FragmentNode, EachNode, StopNode, EndNode
 from .runnable import ClaudeNode, ToolPolicy
 from .effects import EffectNode
 from .agent import SmithersNode
+from .ts_compat import (
+    OutputRef,
+    ApprovalRequest,
+    WorkflowNode,
+    SequenceNode,
+    ParallelNode,
+    TaskNode,
+    SubflowNode,
+    ApprovalGateNode,
+    HumanTaskNode,
+    WorktreeNode,
+    MergeQueueNode,
+)
 
 # Define the discriminated union using Pydantic v2 patterns
 Node = Annotated[
@@ -35,6 +48,17 @@ Node = Annotated[
         SmithersNode,
         # Effect nodes
         EffectNode,
+        # TS-compatibility nodes (Workflow / Sequence / Parallel / Task /
+        # Subflow / ApprovalGate / HumanTask)
+        WorkflowNode,
+        SequenceNode,
+        ParallelNode,
+        TaskNode,
+        SubflowNode,
+        ApprovalGateNode,
+        HumanTaskNode,
+        WorktreeNode,
+        MergeQueueNode,
     ],
     Field(discriminator="type"),
 ]
@@ -54,6 +78,15 @@ EndNode.model_rebuild()
 ClaudeNode.model_rebuild()
 SmithersNode.model_rebuild()
 EffectNode.model_rebuild()
+WorkflowNode.model_rebuild()
+SequenceNode.model_rebuild()
+ParallelNode.model_rebuild()
+TaskNode.model_rebuild()
+SubflowNode.model_rebuild()
+ApprovalGateNode.model_rebuild()
+HumanTaskNode.model_rebuild()
+WorktreeNode.model_rebuild()
+MergeQueueNode.model_rebuild()
 
 # Export all node types and the union
 __all__ = [
@@ -82,4 +115,16 @@ __all__ = [
     "ToolPolicy",
     # Effect nodes
     "EffectNode",
+    # TS-compatibility nodes
+    "OutputRef",
+    "ApprovalRequest",
+    "WorkflowNode",
+    "SequenceNode",
+    "ParallelNode",
+    "TaskNode",
+    "SubflowNode",
+    "ApprovalGateNode",
+    "HumanTaskNode",
+    "WorktreeNode",
+    "MergeQueueNode",
 ]

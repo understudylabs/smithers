@@ -136,11 +136,67 @@ include this exact question:
 
 Demo target once that's resolved: a Python port of
 [`examples/bun-port-smithers/`](examples/bun-port-smithers/) living at
-`examples/bun-port-smithers-py/`. Same phases (lifetimes, phase-A, compile,
+`examples/bun_port_smithers_py/`. Same phases (lifetimes, phase-A, compile,
 ungate, probes, tests, sweeps), same gates, same scorers — but using
 `smithers_py`. If that workflow runs end-to-end on a Bun checkout and
 produces SQLite rows the TS Smithers CLI can also `approve` and
 `inspect`, the resume is real.
+
+### Update: API surface added (2026-05-18)
+
+The TS shape is now wired into `smithers_py` ahead of upstream's input —
+the user authorized "match current main." The catch-up went the
+"add TS shape into smithers_py" route, not the "translation layer" route.
+
+Landed on `port/resume`:
+
+- **9 new node types** in `smithers_py.nodes.ts_compat`:
+  `WorkflowNode`, `SequenceNode`, `ParallelNode`, `TaskNode`, `SubflowNode`,
+  `ApprovalGateNode`, `HumanTaskNode`, `WorktreeNode`, `MergeQueueNode`.
+  Each is a Pydantic model on the existing `NodeBase`, registered in the
+  discriminated union, accepts both snake_case and camelCase keyword
+  arguments (so TS-style call sites port verbatim).
+- **`create_smithers` facade** (`smithers_py.facade`) that mirrors the TS
+  `createSmithers({input, output, ...schemas}, {dbPath})` ergonomics.
+  Returns a `SmithersConfig` with a `.outputs` namespace of typed
+  `OutputRef`s and a `@config.workflow` decorator. `createSmithers` is
+  exported as a camelCase alias.
+- **34 new tests** in `nodes/test_ts_compat.py` and `test_facade.py`.
+  Total suite now **679 passed, 1 skipped, 0 failures** in ~10s (up from
+  the 645 baseline; zero regressions on existing engine tests).
+- **`examples/bun_port_smithers_py/`** — Python port of the canonical
+  bun-port workflow:
+    - `components/schemas.py` — Pydantic mirrors of every Zod schema, with
+      fractional metrics nested under `metrics` for cross-runtime row-shape
+      parity.
+    - `components/agents.py` — dry-mode + real-mode-stub agent bundle, 16
+      named agents matching the TS reference 1:1.
+    - `components/porting_rules.py` — stable node ids, field keys, cache
+      keys, sampling, TSV synthesis. Deterministic; no LLM.
+    - `workflows/lifetime_classify.py` — Phase 1 (the lifetime classifier
+      that Cory describes as "the most important part") fully ported as
+      a typed graph.
+    - `workflow.py` — top-level workflow scaffolding all 7 phases as
+      Subflows with the post-lifetimes ApprovalGate wired.
+
+The graph constructs cleanly. Execution requires engine dispatch on the
+new node types (`task`, `subflow`, `approval_gate`, `human_task`,
+`worktree`, `merge_queue`) — that's the next chunk of work.
+
+### Next concrete steps
+
+1. **Engine dispatch.** Teach `smithers_py.engine.tick_loop` to recognize
+   the new `node.type` literals and route them through the tick loop.
+   Simplest path: translate them down to existing primitives at render
+   time (`SequenceNode` → ordered child execution like `PhaseNode`,
+   `TaskNode` → `ClaudeNode` when `agent` is set, etc.). More principled
+   path: add per-type handlers alongside the existing phase/step/ralph
+   handlers.
+2. **Wire-compat tests.** Once the engine runs the new shape, dump the
+   `output_rows` table after executing the smoke fixture in both Python
+   and TS, diff column-by-column.
+3. **Fill in phases 2–7** of the bun-port example as each engine
+   capability is unblocked.
 
 ## License & attribution
 

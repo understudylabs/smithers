@@ -56,6 +56,7 @@ Changelog = "https://github.com/evmts/smithers/blob/main/smithers_py/CHANGELOG.m
 "__main__.py" = "smithers_py/__main__.py"
 "decorators.py" = "smithers_py/decorators.py"
 "errors.py" = "smithers_py/errors.py"
+"facade.py" = "smithers_py/facade.py"
 "jsx_runtime.py" = "smithers_py/jsx_runtime.py"
 "py.typed" = "smithers_py/py.typed"
 "db" = "smithers_py/db"
