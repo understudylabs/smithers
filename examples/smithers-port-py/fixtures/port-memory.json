@@ -1,0 +1,40 @@
+{
+  "subsystemName": "memory",
+  "pythonTargetDir": "smithers_py_meta/memory",
+  "spec": "# `smithers_py.memory` — cross-run memory (working/messages/recall)\n\nMirrors upstream Smithers' memory surface\n(`/llms-memory.txt`). Three layers, four namespaces, three\nmaintenance processors, pluggable embedding adapter.\n\n## Public surface\n\n```python\nfrom smithers_py.memory import (\n    MemoryStore,\n    MemoryNamespace,\n    MemoryMessage,\n    OpenAIEmbeddingAdapter,\n    NullEmbeddingAdapter,\n    TtlGarbageCollector,\n    TokenLimiter,\n    Summarizer,\n)\n\nstore = MemoryStore(\n    db_path=\"smithers.db\",\n    embeddings=OpenAIEmbeddingAdapter(),  # optional; None disables recall\n)\n\nns = MemoryNamespace(kind=\"workflow\", id=\"code-review\")\nawait store.set(ns, \"last-review\", {\"approved\": True, \"issues\": 3})\nawait store.get(ns, \"last-review\")           # -> {...}\nawait store.recall(ns, \"auth bugs\", top_k=3) # -> list[MemoryFact]\n\nawait store.save_message(\"thread-1\", MemoryMessage(role=\"user\", content=\"hi\"))\nawait store.list_messages(\"thread-1\", limit=10)\n```\n\n## Three layers\n\n| Layer | API | Purpose |\n| --- | --- | --- |\n| Working memory | `set(ns, key, value, ttl_ms?)` / `get(ns, key)` / `list(ns)` / `delete(ns, key)` | Key-value facts. Optional TTL. Last-write-wins. |\n| Message history | `save_message(thread_id, message)` / `list_messages(thread_id, limit?)` / `get_thread(thread_id)` | Append-only chat threads. Sequence-ordered. |\n| Semantic recall | `recall(ns, query, top_k=5)` | Vector search via cosine similarity. Requires embedding adapter. |\n\n## Four namespaces\n\n`MemoryNamespace.kind` is one of `\"workflow\"`, `\"agent\"`, `\"user\"`,\n`\"global\"`. Pick by lifetime — `workflow` scopes to a workflow\ndefinition, `global` is shared everywhere. `kind + id` is the\ncomposite namespace key.\n\n## Pluggable embedding adapter\n\n```python\nclass EmbeddingAdapter(Protocol):\n    @property\n    def model(self) -> str: ...\n    @property\n    def dimensions(self) -> int: ...\n    async def embed(self, texts: list[str]) -> list[list[float]]: ...\n```\n\nBuilt-ins:\n\n- `OpenAIEmbeddingAdapter(model=\"text-embedding-3-small\", api_key=None, base_url=None)`\n  — requires the `openai` package; reads `OPENAI_API_KEY` from env if\n  `api_key` not provided. 1536 dims for the small model.\n- `NullEmbeddingAdapter(dimensions=8)` — zero vectors; for tests.\n\n## Processors\n\nThree maintenance routines, each with a single `process(store, ...)`\nasync method:\n\n- `TtlGarbageCollector` — sweeps expired facts.\n  `await TtlGarbageCollector().process(store)` returns the count removed.\n- `TokenLimiter(max_tokens)` — trims a thread's history below a token\n  budget. ~4-char-per-token heuristic. `await limiter.process(store,\n  thread_id)`.\n- `Summarizer(summarize_fn, keep_recent=10, min_to_compress=5)` —\n  replaces the oldest N messages with a single `system`-role summary\n  produced by an LLM. `summarize_fn(messages) -> str`.\n\n## SQLite schema\n\nTwo tables, both with `ts_*` prefix to match the project convention.\nWAL mode.\n\n```sql\nCREATE TABLE ts_memory_facts (\n    namespace_kind TEXT NOT NULL,\n    namespace_id TEXT NOT NULL,\n    key TEXT NOT NULL,\n    value_json TEXT NOT NULL,\n    metadata_json TEXT,\n    created_at_ms INTEGER NOT NULL,\n    expires_at_ms INTEGER,\n    embedding BLOB,\n    embedding_model TEXT,\n    PRIMARY KEY (namespace_kind, namespace_id, key)\n);\n\nCREATE TABLE ts_memory_messages (\n    thread_id TEXT NOT NULL,\n    seq INTEGER NOT NULL,\n    role TEXT NOT NULL,\n    content TEXT NOT NULL,\n    created_at_ms INTEGER NOT NULL,\n    PRIMARY KEY (thread_id, seq)\n);\n```\n\nEmbeddings pack as little-endian float32 BLOB via stdlib `struct`. No\nnumpy dependency.\n\n## Types\n\n```python\nclass MemoryFact(BaseModel):\n    key: str\n    value: Any\n    metadata: Optional[dict[str, Any]] = None\n    created_at_ms: Optional[int] = None\n    expires_at_ms: Optional[int] = None\n\nclass MemoryMessage(BaseModel):\n    role: Literal[\"user\", \"assistant\", \"system\"]\n    content: str\n    created_at_ms: Optional[int] = None\n\nclass MemoryThread(BaseModel):\n    id: str\n    messages: list[MemoryMessage] = Field(default_factory=list)\n```\n\n## Recall behavior\n\n- Embeds the query via the configured adapter at call time.\n- Computes cosine similarity against every stored embedding in the\n  namespace whose `embedding_model` matches the current adapter's\n  `model` tag.\n- Returns top-K facts by descending similarity, skipping expired.\n- Returns empty list if `top_k <= 0` or no embedding adapter.\n- Raises `RuntimeError` if `recall()` is called when no adapter is\n  configured.\n\n## Mismatched-model skip\n\nFacts whose stored `embedding_model` doesn't match the current\nadapter's model are skipped during recall. Prevents accidentally\nmixing dimensions or comparing across incompatible embedding spaces.\n\n## Files to produce\n\n- `__init__.py` — public exports\n- `types.py` — `MemoryNamespace`, `MemoryFact`, `MemoryMessage`,\n  `MemoryThread` Pydantic types\n- `embeddings.py` — `EmbeddingAdapter` Protocol, `OpenAIEmbeddingAdapter`,\n  `NullEmbeddingAdapter`, `pack_vector`, `unpack_vector`,\n  `cosine_similarity`\n- `store.py` — `MemoryStore` class\n- `processors.py` — `TtlGarbageCollector`, `TokenLimiter`, `Summarizer`\n- `test_memory.py` — pytest-asyncio tests covering: set/get/list/\n  delete, TTL expiry, namespace isolation, message history, semantic\n  recall ordering, mismatched-model skip, all three processors\n",
+  "files": [
+    {
+      "path": "__init__.py",
+      "role": "init",
+      "hints": "Export MemoryStore, MemoryNamespace, MemoryFact, MemoryMessage, MemoryThread, OpenAIEmbeddingAdapter, NullEmbeddingAdapter, TtlGarbageCollector, TokenLimiter, Summarizer."
+    },
+    {
+      "path": "types.py",
+      "role": "types",
+      "hints": "Pydantic BaseModel: MemoryNamespace, MemoryFact, MemoryMessage, MemoryThread. Literal[\"workflow\",\"agent\",\"user\",\"global\"] for kind."
+    },
+    {
+      "path": "embeddings.py",
+      "role": "module",
+      "hints": "EmbeddingAdapter Protocol + OpenAIEmbeddingAdapter (needs openai lib, reads OPENAI_API_KEY) + NullEmbeddingAdapter. Plus pack_vector / unpack_vector via stdlib struct, cosine_similarity pure stdlib."
+    },
+    {
+      "path": "store.py",
+      "role": "module",
+      "hints": "MemoryStore class. Schema: ts_memory_facts + ts_memory_messages tables. WAL mode. Methods: set, get, list, delete, recall, save_message, list_messages, get_thread, expire_sweep."
+    },
+    {
+      "path": "processors.py",
+      "role": "module",
+      "hints": "TtlGarbageCollector, TokenLimiter(max_tokens), Summarizer(summarize_fn, keep_recent, min_to_compress). Each has process(store, ...) async method."
+    },
+    {
+      "path": "test_memory.py",
+      "role": "test",
+      "hints": "pytest-asyncio + tempfile fixtures. Cover: set/get/list/delete + TTL, message history (save/list with limit), semantic recall ordering, mismatched-model skip, all three processors. Use a deterministic embedding adapter for tests so recall ordering is reproducible."
+    }
+  ],
+  "upstreamReferenceDts": "",
+  "applyToDisk": false,
+  "forkRepoPath": "/Users/luis/smithers"
+}

@@ -1,9 +1,61 @@
 ## Port a subsystem to Python — single agent, file tools
 
-You are porting the `smithers_py.{props.subsystemName}` subsystem.
+You are porting the `{props.subsystemName}` subsystem to Python.
 
 WORKING DIRECTORY: `{props.forkRepoPath}`
-TARGET DIRECTORY: `{props.pythonTargetDir}`
+TARGET DIRECTORY: `{props.pythonTargetDir}` (relative to working directory)
+
+### CRITICAL: target directory is authoritative
+
+Write to **`{props.forkRepoPath}/{props.pythonTargetDir}/`** even if a similarly-
+named module already exists at a different path. Do NOT skip writing
+files because a similar implementation exists elsewhere in the repo —
+the meta-workflow's purpose is to produce a fresh independent port at
+the specified target. Always `Bash: mkdir -p {props.forkRepoPath}/{props.pythonTargetDir}`
+first, then `Write` each file under that exact path.
+
+The Python import path for verification is computed from the target
+directory by replacing `/` with `.`. For target `{props.pythonTargetDir}`
+the import is `{props.pythonTargetDir.replace('/', '.')}`.
+
+### PROHIBITED behaviors (will fail the run)
+
+1. **Do not read `{props.forkRepoPath}/smithers_py/{props.subsystemName}/`**
+   if it exists. That's a competing implementation; you are
+   producing an INDEPENDENT version from the spec.
+
+2. **Do not declare success without Writing files.** Empty Write
+   counts means failure. The workflow records every Write tool call;
+   a zero-Write run is treated as a stub.
+
+3. **Do not reuse existing tests.** If a test file already exists
+   anywhere in the repo for this subsystem, do not Read it. Generate
+   tests fresh from the spec.
+
+### Acceptance contract you must satisfy
+
+Before returning the final JSON, you MUST have executed these Bash
+commands successfully (in order):
+
+```
+Bash: ls {props.forkRepoPath}/{props.pythonTargetDir}/ | wc -l
+```
+The output must equal the number of files in the "Files to produce"
+section below — confirms you wrote everything.
+
+```
+Bash: cd {props.forkRepoPath} && PYTHONPATH=. smithers_py/.venv/bin/python -c "from {props.pythonTargetDir.replace('/', '.')} import *"
+```
+Must exit 0.
+
+```
+Bash: cd {props.forkRepoPath} && PYTHONPATH=. smithers_py/.venv/bin/python -m pytest {props.pythonTargetDir}/test_{props.subsystemName}.py -q
+```
+Must show "N passed" for some N >= 1.
+
+If any check fails, fix with Edit and re-run. Do not return final
+JSON until all three pass against your fresh implementation at
+`{props.pythonTargetDir}/`.
 
 You have `Read`, `Write`, `Edit`, `Grep`, `Glob`, and `Bash` tools. Use
 them to read existing smithers_py code for context, write each Python
@@ -15,18 +67,27 @@ file directly to disk, and verify the result before returning.
 2. For each file listed below, `Write` complete Python source to
    `{props.forkRepoPath}/{props.pythonTargetDir}/<path>`. Before writing a
    file that references symbols from another file in this subsystem,
-   `Read` that file to confirm the exact export names.
-3. After all files exist, run:
+   `Read` that file to confirm the exact export names. **Do not skip
+   any Write step.** Even if a similar file exists elsewhere in the
+   repo, you MUST `Write` a fresh copy under the target directory.
+3. Verify every file landed where expected:
 
    ```
-   Bash: cd {props.forkRepoPath} && python -c "from {props.pythonTargetDir.replace('/', '.')} import *"
+   Bash: ls -la {props.forkRepoPath}/{props.pythonTargetDir}/
+   ```
+
+   If a file is missing, go back to step 2 and `Write` it.
+4. After all files exist, run:
+
+   ```
+   Bash: cd {props.forkRepoPath} && PYTHONPATH=. smithers_py/.venv/bin/python -c "from {props.pythonTargetDir.replace('/', '.')} import *"
    ```
 
    Fix any `ImportError` with `Edit`.
-4. Then run:
+5. Then run:
 
    ```
-   Bash: cd {props.forkRepoPath} && smithers_py/.venv/bin/python -m pytest {props.pythonTargetDir}/test_{props.subsystemName}.py -q
+   Bash: cd {props.forkRepoPath} && PYTHONPATH=. smithers_py/.venv/bin/python -m pytest {props.pythonTargetDir}/test_{props.subsystemName}.py -q
    ```
 
    Fix any test failures with `Edit`. Iterate up to 5 times.

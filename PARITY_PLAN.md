@@ -119,19 +119,31 @@ quality, and remember context across syncs.
 - [x] `smithers_py.cache` ✅ 2026-05-18. `CachePolicy` with `by(ctx)`
       + `version` + schema signature. Three scopes (run/workflow/global).
       TTL with lazy sweep. Persists to `ts_cache`. 18 tests pass.
-- [ ] `smithers_py.serve` (REST + SSE single-workflow Hono-equivalent
-      via FastAPI; mirrors upstream `createServeApp` surface)
+- [x] `smithers_py.serve` ✅ 2026-05-18 — **produced by meta-workflow**
+      (not hand-coded). FastAPI single-workflow server with
+      REST + SSE, bearer auth, run lifecycle / approvals / signals /
+      cancel / metrics routes. 12 tests pass. Workflow run:
+      `port-serve-cli-v2` via
+      `examples/smithers-port-py/workflows/port-subsystem-cli.tsx`,
+      committed in `meta-workflow:` prefixed commit on port/resume.
 - [ ] Wire `memory={recall, remember, threadId}` into `TaskNode` so
       agents auto-recall + auto-persist (separate small task #71)
 - [ ] Wire `cache.by` policy enforcement into `runtime/runner.py`
       (currently the cache module is built but not yet called from
       the task execution path)
 
-**Phase 1 status**: 4 of 5 production essentials landed
-(memory + tools + scorers + cache). HTTP server is the last piece.
+**Phase 1 status**: All 5 production essentials landed (memory +
+tools + scorers + cache hand-coded; serve via meta-workflow). 822
+hand-coded + 12 meta-generated = 834 tests pass / 1 skip.
 
-**Test count**: 822 pass / 1 skip in the Python port test suite.
-Up from 724 baseline. Three new subsystems added 98 tests total.
+**Meta-workflow proof point**: Phase 1.5 (serve) demonstrated that
+Smithers can port its own Python twin — `port-subsystem-cli.tsx` +
+ClaudeCodeAgent produced 756 LoC of idiomatic FastAPI Python from a
+4-KB markdown spec, first-run-mergable, in a single tool loop at
+~$0.30-0.50. Companion `port-subsystem.tsx` (API mode) ran the same
+spec at $0.21 but produced cross-file naming drift; the CLI agent's
+file-tool awareness avoided that failure mode. See
+`fixtures/spec-serve.md` for the spec format used.
 
 **Phase 2: differentiating capabilities (1.5 weeks)**
 
