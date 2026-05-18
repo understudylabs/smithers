@@ -25,6 +25,9 @@ from .ts_compat import (
     HumanTaskNode,
     WorktreeNode,
     MergeQueueNode,
+    BranchNode,
+    LoopNode,
+    TSRalphNode,
 )
 
 # Define the discriminated union using Pydantic v2 patterns
@@ -59,6 +62,8 @@ Node = Annotated[
         HumanTaskNode,
         WorktreeNode,
         MergeQueueNode,
+        BranchNode,
+        LoopNode,
     ],
     Field(discriminator="type"),
 ]
@@ -87,6 +92,8 @@ ApprovalGateNode.model_rebuild()
 HumanTaskNode.model_rebuild()
 WorktreeNode.model_rebuild()
 MergeQueueNode.model_rebuild()
+BranchNode.model_rebuild()
+LoopNode.model_rebuild()
 
 # Export all node types and the union
 __all__ = [
@@ -127,4 +134,7 @@ __all__ = [
     "HumanTaskNode",
     "WorktreeNode",
     "MergeQueueNode",
+    "BranchNode",
+    "LoopNode",
+    "TSRalphNode",
 ]

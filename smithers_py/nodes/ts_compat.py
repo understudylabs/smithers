@@ -342,6 +342,110 @@ class HumanTaskNode(NodeBase):
     }
 
 
+# ----- Control flow primitives -----------------------------------------------
+
+
+class BranchNode(NodeBase):
+    """Conditional execution node.
+
+    Mirrors TS ``<Branch if={...} then={...} else={...}>``. Carries the
+    ``then`` child as ``then_child`` and the optional ``else`` child as
+    ``else_child`` (Python reserved words rename). The walker picks one
+    based on ``condition`` at execution time.
+    """
+
+    type: Literal["branch"] = "branch"
+    condition: bool = Field(
+        ...,
+        description="Whether to walk the `then_child` (else falls through to `else_child`)",
+        alias="if",
+    )
+    then_child: Any = Field(
+        ...,
+        description="Child node executed when condition is True",
+        alias="then",
+    )
+    else_child: Optional[Any] = Field(
+        default=None,
+        description="Child node executed when condition is False",
+        alias="else",
+    )
+    skip_if: bool = Field(default=False, alias="skipIf")
+
+    model_config = {
+        "extra": "allow",
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+    }
+
+
+class LoopNode(NodeBase):
+    """Repeated execution node with an exit condition.
+
+    Mirrors TS ``<Loop until={...} maxIterations={N} onMaxReached={...}>``.
+    Iterates ``children`` until ``until_fn(ctx)`` returns True or
+    ``max_iterations`` is reached, whichever comes first.
+
+    ``on_max_reached`` controls behavior when the loop exhausts attempts
+    without satisfying ``until_fn``:
+      - ``"fail"`` (default): raise a workflow error.
+      - ``"return-last"``: stop and treat the last iteration's outputs
+        as the loop result; downstream nodes see the final values.
+
+    Each iteration's children execute under a unique node-id suffix
+    (``…/loop:<id>/iter:<N>/<child>``) so resume can skip already-
+    completed iterations.
+
+    Note: TS shipped ``Ralph`` as a deprecated alias of ``Loop``; we
+    export ``RalphNode = LoopNode`` for source compatibility but emit
+    ``type: "loop"`` either way.
+    """
+
+    type: Literal["loop"] = "loop"
+    id: str = Field(..., description="Stable loop node identifier")
+    until_fn: Optional[Callable[[Any], bool]] = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Callable that receives the workflow ctx and returns True to "
+            "exit the loop. None means loop runs for max_iterations."
+        ),
+        alias="until",
+    )
+    max_iterations: int = Field(
+        default=10,
+        ge=1,
+        alias="maxIterations",
+    )
+    on_max_reached: Literal["fail", "return-last"] = Field(
+        default="return-last",
+        alias="onMaxReached",
+    )
+    continue_as_new_every: Optional[int] = Field(
+        default=None,
+        alias="continueAsNewEvery",
+    )
+    skip_if: bool = Field(default=False, alias="skipIf")
+
+    model_config = {
+        "extra": "allow",
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+    }
+
+
+# The TS API shipped ``Ralph`` as a deprecated alias of ``Loop``. We
+# keep ``TSRalphNode`` available inside this module for source-level
+# compatibility but do NOT re-export it as ``RalphNode`` at package
+# level, because ``smithers_py.nodes.structural`` already exports a
+# different ``RalphNode`` belonging to the v1.0.0 engine. The two
+# would collide at the discriminated-union level.
+#
+# Workflow authors should prefer ``LoopNode``. The TS alias remains
+# importable via ``from smithers_py.nodes.ts_compat import TSRalphNode``.
+TSRalphNode = LoopNode
+
+
 # ----- Workspace isolation ----------------------------------------------------
 
 
@@ -422,4 +526,7 @@ __all__ = [
     "HumanTaskNode",
     "WorktreeNode",
     "MergeQueueNode",
+    "BranchNode",
+    "LoopNode",
+    "TSRalphNode",
 ]

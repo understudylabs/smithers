@@ -25,7 +25,9 @@ from pydantic import BaseModel, ValidationError
 
 from ..nodes.ts_compat import (
     ApprovalGateNode,
+    BranchNode,
     HumanTaskNode,
+    LoopNode,
     MergeQueueNode,
     OutputRef,
     ParallelNode,
@@ -298,6 +300,12 @@ def _walk(node: Any, ctx: _Ctx, parent_path: str) -> _WalkResult:
     if isinstance(node, HumanTaskNode):
         return _run_human_task(node, ctx, parent_path)
 
+    if isinstance(node, BranchNode):
+        return _run_branch(node, ctx, parent_path)
+
+    if isinstance(node, LoopNode):
+        return _run_loop(node, ctx, parent_path)
+
     # Anything else (existing v1.0.0 nodes) is treated as a pass-through
     # container for the MVP — walk children if any. Engine integration
     # for the v1.0.0 nodes is a separate piece of work.
@@ -526,6 +534,59 @@ def _run_approval_gate(
     ctx._output_cache[node_id] = payload
     ctx._output_cache[node.id] = payload
     return _WalkResult()
+
+
+def _run_branch(node: BranchNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
+    """Walk ``then_child`` when condition is True, ``else_child`` otherwise."""
+    if node.skip_if:
+        return _WalkResult()
+    branch_path = f"{parent_path}/branch:{_safe_id(node.key or 'br')}"
+    if node.condition:
+        return _walk(node.then_child, ctx, f"{branch_path}/then")
+    if node.else_child is not None:
+        return _walk(node.else_child, ctx, f"{branch_path}/else")
+    return _WalkResult()
+
+
+def _run_loop(node: LoopNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
+    """Iterate ``children`` until ``until_fn(ctx)`` is True or max reached.
+
+    Each iteration writes child output rows under a unique node-id suffix
+    so resume can skip iterations whose rows already exist. The loop's
+    terminal status row is written by the engine — workflows that need a
+    loop-level output should append a final ``TaskNode`` after the loop.
+    """
+    if node.skip_if:
+        return _WalkResult()
+    loop_path = f"{parent_path}/loop:{_safe_id(node.id)}"
+    accumulated_pending: List[ApprovalRow] = []
+    until_fn = node.until_fn
+    for i in range(node.max_iterations):
+        iter_path = f"{loop_path}/iter:{i}"
+        result = _walk_children(node.children, ctx, iter_path)
+        accumulated_pending.extend(result.pending_approvals)
+        if result.paused:
+            return _WalkResult(paused=True, pending_approvals=accumulated_pending)
+        if until_fn is not None:
+            try:
+                satisfied = bool(until_fn(ctx))
+            except Exception as exc:
+                raise WorkflowError(
+                    f"LoopNode {node.id!r} until callable raised: {exc}",
+                    node_id=loop_path,
+                    cause=exc,
+                ) from exc
+            if satisfied:
+                return _WalkResult(pending_approvals=accumulated_pending)
+    if node.on_max_reached == "fail":
+        raise WorkflowError(
+            f"LoopNode {node.id!r} exhausted {node.max_iterations} iterations "
+            "without satisfying `until`",
+            node_id=loop_path,
+        )
+    # on_max_reached == "return-last" — accept the final iteration as the
+    # loop's terminal state and continue downstream.
+    return _WalkResult(pending_approvals=accumulated_pending)
 
 
 def _run_human_task(

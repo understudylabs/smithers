@@ -27,8 +27,8 @@ needs a corresponding adjustment there.
 | 92 | 2026-03-06 | docs: `RunResult.output` clarification | ✅ Ported | Our `RunResult.output` is the terminal output row's payload (preferring `output_name == "output"`); documented in runner docstring + PORT_RESUME. |
 | 93 | 2026-03-13 | docs: Ralph as core pattern | ➖ N/A | Docs-only; Ralph node port is deferred. |
 | 94 | 2026-03-18 | docs: nested ralph | ➖ N/A | Docs-only; tied to Ralph deferral. |
-| 109 | 2026-03-18 | Ralph loops respect approved reviews | ⏳ Deferred | `RalphNode` not yet added to runtime. v0.2. |
-| 113 | 2026-03-18 | Nested Loop/Ralph across structural nodes | ⏳ Deferred | Same — Ralph port. v0.2. |
+| 109 | 2026-03-18 | Ralph loops respect approved reviews | ✅ Ported (Loop+TSRalph) | `LoopNode` added with `until_fn` callable + `max_iterations` + `on_max_reached` ("fail"/"return-last"). Ralph is a deprecated alias upstream; exported as `TSRalphNode` (not `RalphNode`, which still belongs to the v1.0.0 engine). Behavioral fix (loops respect approved reviews) is naturally encoded — workflows pass `until_fn=lambda c: c.output("reviewer")["approved"]`. 4 new tests. |
+| 113 | 2026-03-18 | Nested Loop/Ralph across structural nodes | ✅ Ported (Loop) | Nesting works: each iteration suffixes node ids with `:iter:N`, so child paths remain unique across nested loops. |
 | 114 | 2026-03-18 | Codex rollout recorder stderr tolerance | ⏳ Deferred | Codex agent adapter not ported yet. v0.2 with PiAgent and OpenCodeAgent. |
 | 118 | 2026-03-27 | PiAgent RPC terminal-response wait | ⏳ Deferred | Tied to #72. |
 | 124 | 2026-04-16 | test: supervisor double-resume reproduction | ⏳ Deferred | We have no supervisor loop yet; resume-on-crash is manual via `--force`. The supervisor pattern is a v0.2 ergonomic. |
@@ -69,11 +69,11 @@ is a deliberate v0.1 simplification:
 
 ## Summary of catch-up state
 
-- **5 PRs fully ported** (#87, #92, #130, #132, plus the original MVP
-  surface from #91-ish era).
-- **9 PRs deferred** to v0.2 — every one is either tied to agent provider
-  adapters (#72/#85/#114/#118/#125/#138), the Ralph loop port
-  (#109/#113), CLI ergonomics (#88/#124), or `smithers graph`/#89.
+- **7 PRs fully ported** (#87, #92, #109, #113, #130, #132, plus the
+  original MVP surface from #91-ish era).
+- **7 PRs deferred** to v0.2 — every one is either tied to agent
+  provider adapters (#72/#85/#114/#118/#125/#138) or CLI ergonomics
+  (#88/#124, #89).
 - **9 PRs N/A** — docs only or Bun/gateway-specific.
 - **1 open PR** (#135 observability) parked behind a "wait for upstream
   to ship" gate.
@@ -84,8 +84,9 @@ The Python port is at **runtime + CLI parity** with TS main for the
 slice of the API surface most workflows actually use:
 
 - `Workflow / Sequence / Parallel / Task / Subflow / ApprovalGate /
-  HumanTask / Worktree / MergeQueue` — all 9 node types live and
-  executable.
+  HumanTask / Worktree / MergeQueue / Branch / Loop` — 11 node types
+  live and executable. `TSRalphNode` is exported as the deprecated-
+  upstream alias for `LoopNode`.
 - `createSmithers({input, output, ...}, db_path=...)` — facade landed
   including duplicate-schema safety (#130).
 - `RunResult` — paused / completed / failed / cancelled statuses with
@@ -93,8 +94,8 @@ slice of the API surface most workflows actually use:
 - Retry policy with `NonRetryableError` (PR #132).
 - `up --resume --force` + SIGINT cancellation (PR #87).
 - CLI: `smithers-ts up | approve | deny | inspect | ps`.
-- 30 runtime tests + 35 schema/facade tests, **698 total passing**
-  (was 645 at python-branch-freeze; +53 new tests, zero regressions).
+- 37 runtime tests + 35 schema/facade tests, **705 total passing**
+  (was 645 at python-branch-freeze; +60 new tests, zero regressions).
 
 ## What "parity with current main" does NOT mean for v0.1
 

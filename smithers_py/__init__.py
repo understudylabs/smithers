@@ -44,6 +44,9 @@ from .nodes import (
     HumanTaskNode,
     WorktreeNode,
     MergeQueueNode,
+    BranchNode,
+    LoopNode,
+    TSRalphNode,
 )
 
 # TS-compatible facade

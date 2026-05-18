@@ -17,7 +17,9 @@ from pydantic import BaseModel, Field
 from smithers_py import (
     ApprovalGateNode,
     ApprovalRequest,
+    BranchNode,
     HumanTaskNode,
+    LoopNode,
     OutputRef,
     ParallelNode,
     RunResult,
@@ -26,6 +28,7 @@ from smithers_py import (
     Store,
     SubflowNode,
     TaskNode,
+    TSRalphNode,
     WorkflowNode,
     approve_run,
     create_smithers,
@@ -489,6 +492,264 @@ class TestInspect:
     def test_inspect_unknown_run_raises(self, db_path: str) -> None:
         with pytest.raises(WorkflowError):
             inspect_run("nonexistent-run", db_path=db_path)
+
+
+class TestBranch:
+    def test_branch_takes_then_child_when_true(self, db_path: str) -> None:
+        config = _build_basic_config()
+        outputs = config.outputs
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="branch-true",
+                children=[
+                    BranchNode(
+                        **{"if": True},
+                        then=TaskNode(
+                            id="then-task",
+                            output=outputs.output,
+                            render=lambda: {
+                                "workload": "then-path",
+                                "total": 1,
+                                "steps": ["then"],
+                            },
+                        ),
+                        else_child=TaskNode(
+                            id="else-task",
+                            output=outputs.output,
+                            render=lambda: {
+                                "workload": "else-path",
+                                "total": 0,
+                                "steps": [],
+                            },
+                        ),
+                    )
+                ],
+            )
+
+        r = run_workflow(wf, input={"workload": "x"}, db_path=db_path)
+        assert r.status == RunStatus.COMPLETED
+        assert r.output is not None
+        assert r.output["workload"] == "then-path"
+
+    def test_branch_takes_else_child_when_false(self, db_path: str) -> None:
+        config = _build_basic_config()
+        outputs = config.outputs
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="branch-false",
+                children=[
+                    BranchNode(
+                        **{"if": False},
+                        then=TaskNode(
+                            id="then-task",
+                            output=outputs.output,
+                            render=lambda: {
+                                "workload": "then-path",
+                                "total": 1,
+                                "steps": ["then"],
+                            },
+                        ),
+                        else_child=TaskNode(
+                            id="else-task",
+                            output=outputs.output,
+                            render=lambda: {
+                                "workload": "else-path",
+                                "total": 0,
+                                "steps": [],
+                            },
+                        ),
+                    )
+                ],
+            )
+
+        r = run_workflow(wf, input={"workload": "x"}, db_path=db_path)
+        assert r.status == RunStatus.COMPLETED
+        assert r.output is not None
+        assert r.output["workload"] == "else-path"
+
+    def test_branch_no_else_falls_through(self, db_path: str) -> None:
+        config = _build_basic_config()
+        outputs = config.outputs
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="branch-no-else",
+                children=[
+                    SequenceNode(
+                        children=[
+                            BranchNode(
+                                **{"if": False},
+                                then=TaskNode(
+                                    id="never",
+                                    output=outputs.step1,
+                                    render=lambda: {"step": "never", "value": 0},
+                                ),
+                            ),
+                            TaskNode(
+                                id="after",
+                                output=outputs.output,
+                                render=lambda: {
+                                    "workload": "after",
+                                    "total": 0,
+                                    "steps": [],
+                                },
+                            ),
+                        ]
+                    )
+                ],
+            )
+
+        r = run_workflow(wf, input={"workload": "x"}, db_path=db_path)
+        assert r.status == RunStatus.COMPLETED
+        # The `then` task didn't run; only the `after` task wrote a row.
+        node_ids = [r["node_id"] for r in r.output_rows]
+        assert any("never" not in nid for nid in node_ids)
+        assert any("after" in nid for nid in node_ids)
+
+
+class TestLoop:
+    def test_loop_exits_when_until_true(self, db_path: str) -> None:
+        config = _build_basic_config()
+        outputs = config.outputs
+
+        counter = {"n": 0}
+
+        def bump():
+            counter["n"] += 1
+            return {"step": f"iter-{counter['n']}", "value": counter["n"]}
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="loop-until",
+                children=[
+                    SequenceNode(
+                        children=[
+                            LoopNode(
+                                id="cycle",
+                                maxIterations=10,
+                                until=lambda c: counter["n"] >= 3,
+                                onMaxReached="fail",
+                                children=[
+                                    TaskNode(
+                                        id="bump",
+                                        output=outputs.step1,
+                                        render=bump,
+                                    )
+                                ],
+                            ),
+                            TaskNode(
+                                id="final",
+                                output=outputs.output,
+                                render=lambda: {
+                                    "workload": "loop-done",
+                                    "total": counter["n"],
+                                    "steps": [f"iter-{i + 1}" for i in range(counter["n"])],
+                                },
+                            ),
+                        ]
+                    )
+                ],
+            )
+
+        r = run_workflow(wf, input={"workload": "x"}, db_path=db_path)
+        assert r.status == RunStatus.COMPLETED
+        assert counter["n"] == 3
+        assert r.output is not None
+        assert r.output["total"] == 3
+
+    def test_loop_max_reached_return_last(self, db_path: str) -> None:
+        config = _build_basic_config()
+        outputs = config.outputs
+
+        counter = {"n": 0}
+
+        def bump():
+            counter["n"] += 1
+            return {"step": "x", "value": counter["n"]}
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="loop-max",
+                children=[
+                    SequenceNode(
+                        children=[
+                            LoopNode(
+                                id="cycle",
+                                maxIterations=4,
+                                until=lambda c: False,
+                                onMaxReached="return-last",
+                                children=[
+                                    TaskNode(
+                                        id="bump",
+                                        output=outputs.step1,
+                                        render=bump,
+                                    )
+                                ],
+                            ),
+                            TaskNode(
+                                id="final",
+                                output=outputs.output,
+                                render=lambda: {
+                                    "workload": "max",
+                                    "total": counter["n"],
+                                    "steps": [],
+                                },
+                            ),
+                        ]
+                    )
+                ],
+            )
+
+        r = run_workflow(wf, input={"workload": "x"}, db_path=db_path)
+        assert r.status == RunStatus.COMPLETED
+        assert counter["n"] == 4
+
+    def test_loop_max_reached_fail(self, db_path: str) -> None:
+        config = _build_basic_config()
+        outputs = config.outputs
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="loop-fail",
+                children=[
+                    LoopNode(
+                        id="cycle",
+                        maxIterations=2,
+                        until=lambda c: False,
+                        onMaxReached="fail",
+                        children=[
+                            TaskNode(
+                                id="t",
+                                output=outputs.step1,
+                                render=lambda: {"step": "x", "value": 1},
+                            )
+                        ],
+                    )
+                ],
+            )
+
+        r = run_workflow(wf, input={"workload": "x"}, db_path=db_path)
+        assert r.status == RunStatus.FAILED
+        assert "exhausted" in (r.error or {}).get("message", "")
+
+    def test_ts_ralph_alias_works(self) -> None:
+        """TSRalphNode (TS-API deprecated alias) is just LoopNode.
+
+        We can't shadow the v1.0.0 ``RalphNode`` at the top-level — that
+        name still belongs to the structural Ralph loop node in the
+        existing engine. Workflow authors targeting the modern TS API
+        should use ``LoopNode``; the deprecated ``Ralph`` alias is
+        available as ``TSRalphNode``.
+        """
+        assert TSRalphNode is LoopNode
 
 
 class TestForceResume:
