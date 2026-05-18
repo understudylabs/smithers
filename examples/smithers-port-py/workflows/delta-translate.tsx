@@ -4,18 +4,24 @@ import { z } from "zod";
 
 import { agentsFor } from "../components/agents.ts";
 import { estimateCostMicrocents, stableNodeId } from "../components/sync-rules.ts";
+import { fetchPrDiff } from "../components/upstream-watch.ts";
 import {
   classificationSummarySchema,
   translationRowSchema,
   translationSummarySchema,
+  upstreamPrSchema,
 } from "../components/schemas.ts";
 import TranslateDeltaPrompt from "../prompts/translate-delta.mdx";
 
 const inputSchema = z.object({
   forkRepoPath: z.string(),
+  upstreamRepo: z.string().default(""),
   classifications: classificationSummarySchema,
+  upstreamPrs: z.array(upstreamPrSchema).default([]),
   maxConcurrency: z.number().int().min(1).max(16),
 });
+
+const DIFF_MAX_CHARS = 24_000;
 
 const { Workflow, Task, Sequence, Parallel, smithers, outputs } = createSmithers(
   {
@@ -30,6 +36,9 @@ export default smithers((ctx) => {
   const agents = agentsFor({ forkRepoPath: ctx.input.forkRepoPath });
   const portable = ctx.input.classifications.rows.filter(
     (r) => r.action === "port" || r.action === "port-with-replacement",
+  );
+  const upstreamByNumber = new Map(
+    ctx.input.upstreamPrs.map((p) => [p.number, p] as const),
   );
 
   const rows = portable
@@ -46,24 +55,36 @@ export default smithers((ctx) => {
     <Workflow name="port-sync-delta-translate">
       <Sequence>
         <Parallel maxConcurrency={ctx.input.maxConcurrency}>
-          {portable.map((row) => (
-            <Task
-              key={String(row.prNumber)}
-              id={`translate:${stableNodeId(String(row.prNumber))}`}
-              output={outputs.translation}
-              agent={agents.translator}
-              timeoutMs={20 * 60_000}
-            >
-              <TranslateDeltaPrompt
-                prNumber={String(row.prNumber)}
-                prTitle={"(see classification rationale)"}
-                prUrl=""
-                pythonTarget={row.pythonTarget || `smithers_py/runtime/pr_${row.prNumber}.py`}
-                action={row.action}
-                schema={translationRowSchema}
-              />
-            </Task>
-          ))}
+          {portable.map((row) => {
+            const upstream = upstreamByNumber.get(row.prNumber);
+            const diff = ctx.input.upstreamRepo
+              ? fetchPrDiff({
+                  repo: ctx.input.upstreamRepo,
+                  number: row.prNumber,
+                  maxChars: DIFF_MAX_CHARS,
+                })
+              : "(no upstreamRepo provided — diff unavailable)";
+            return (
+              <Task
+                key={String(row.prNumber)}
+                id={`translate:${stableNodeId(String(row.prNumber))}`}
+                output={outputs.translation}
+                agent={agents.translator}
+                timeoutMs={20 * 60_000}
+              >
+                <TranslateDeltaPrompt
+                  prNumber={String(row.prNumber)}
+                  prTitle={upstream?.title ?? "(unknown)"}
+                  prUrl={upstream?.htmlUrl ?? ""}
+                  pythonTarget={row.pythonTarget || `smithers_py/runtime/pr_${row.prNumber}.py`}
+                  action={row.action}
+                  prDiff={diff}
+                  diffMaxChars={String(DIFF_MAX_CHARS)}
+                  schema={translationRowSchema}
+                />
+              </Task>
+            );
+          })}
         </Parallel>
 
         {allDone ? (

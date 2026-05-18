@@ -6,6 +6,15 @@ PR_URL: {props.prUrl}
 PYTHON_TARGET: {props.pythonTarget}
 ACTION: {props.action}
 
+### Upstream diff (truncated to {props.diffMaxChars} chars)
+
+The unified diff for the upstream PR begins on the next line and ends at
+the `--- END UPSTREAM DIFF ---` marker. Treat it as a real `git diff`.
+
+{props.prDiff}
+
+--- END UPSTREAM DIFF ---
+
 Apply the standard paradigm rules — Zod → Pydantic, drizzle-orm →
 SQLAlchemy or stdlib sqlite3, React reconciler → context manager,
 bun:sqlite → apsw / stdlib sqlite3, `ai` SDK → openai/anthropic

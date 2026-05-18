@@ -155,7 +155,9 @@ export default smithers((ctx) => {
             workflow={translateWorkflow as any}
             input={{
               forkRepoPath: FORK_REPO_PATH,
+              upstreamRepo: ctx.input.upstreamRepo,
               classifications: classify,
+              upstreamPrs: upstream?.prs ?? [],
               maxConcurrency: ctx.input.maxConcurrency,
             }}
           />
@@ -209,11 +211,12 @@ export default smithers((ctx) => {
           <Task id="main:final" output={outputs.output}>
             {() => {
               const total = classify?.rows.length ?? 0;
-              const ported = (classify?.metrics.portCount ?? 0) +
-                (classify?.metrics.portWithReplacementCount ?? 0);
+              const ported = translate?.metrics.drafted ?? 0;
+              const failed = translate?.metrics.failed ?? 0;
               const skipped = (classify?.metrics.skipV0Count ?? 0) +
                 (classify?.metrics.skipForeverCount ?? 0) +
-                (classify?.metrics.alreadyPortedCount ?? 0);
+                (classify?.metrics.alreadyPortedCount ?? 0) +
+                failed;
               const cost = translate?.metrics.estimatedCostUsdMicrocents ?? 0;
               return {
                 schema_version: "smithers-port-sync-final-v0" as const,

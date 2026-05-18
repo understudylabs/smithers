@@ -2,7 +2,7 @@
 import { createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
 
-import { fetchRecentPrs } from "../components/upstream-watch.ts";
+import { fetchPrsByNumber, fetchRecentPrs } from "../components/upstream-watch.ts";
 import {
   upstreamWatchResultSchema,
 } from "../components/schemas.ts";
@@ -27,18 +27,11 @@ export default smithers((ctx) => (
     <Sequence>
       <Task id="upstream:fetch" output={outputs.output}>
         {() => {
-          // Either honor an explicit prsToProcess override or scan
+          // Either honor an explicit prsToProcess override (enriched via
+          // `gh pr view` so the classifier sees real metadata) or scan
           // upstream for recently-merged PRs.
           const prs = ctx.input.prsToProcess.length > 0
-            ? ctx.input.prsToProcess.map((n) => ({
-                number: n,
-                title: `(override) PR #${n}`,
-                author: "",
-                mergedAt: "",
-                htmlUrl: "",
-                filesChanged: [] as string[],
-                labels: [] as string[],
-              }))
+            ? fetchPrsByNumber({ repo: ctx.input.upstreamRepo, numbers: ctx.input.prsToProcess })
             : fetchRecentPrs({ repo: ctx.input.upstreamRepo, sinceIso: ctx.input.sinceIso });
           const docs = prs.filter((p) => /docs|readme/i.test(p.title)).length;
           const gateway = prs.filter((p) =>

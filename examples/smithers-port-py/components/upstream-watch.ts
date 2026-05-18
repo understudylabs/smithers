@@ -16,6 +16,71 @@ export type UpstreamPr = {
 };
 
 
+export function fetchPrDiff(args: {
+  repo: string;
+  number: number;
+  maxChars?: number;
+}): string {
+  const max = args.maxChars ?? 24_000;
+  try {
+    const raw = execSync(
+      `gh pr diff ${args.number} --repo ${args.repo}`,
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 10 * 1024 * 1024 },
+    );
+    if (raw.length <= max) return raw;
+    return raw.slice(0, max) + `\n... [truncated; full diff was ${raw.length} chars]`;
+  } catch (err) {
+    return `(diff fetch failed: ${err})`;
+  }
+}
+
+
+export function fetchPrsByNumber(args: {
+  repo: string;
+  numbers: number[];
+}): UpstreamPr[] {
+  // Enrich a known list of PR numbers via `gh pr view`. Used when the
+  // workflow input pins specific PRs (override mode) — gives the
+  // classifier real title/author/files instead of a stub.
+  const out: UpstreamPr[] = [];
+  for (const n of args.numbers) {
+    try {
+      const raw = execSync(
+        `gh pr view ${n} --repo ${args.repo} --json number,title,author,mergedAt,url,labels,files`,
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      );
+      const row = JSON.parse(raw);
+      const filesChanged: string[] = Array.isArray(row?.files)
+        ? row.files.map((f: any) => f?.path ?? "").filter(Boolean)
+        : [];
+      out.push({
+        number: row.number,
+        title: row.title ?? "",
+        author: typeof row.author === "object" ? (row.author?.login ?? "") : (row.author ?? ""),
+        mergedAt: row.mergedAt ?? "",
+        htmlUrl: row.url ?? "",
+        filesChanged,
+        labels: Array.isArray(row.labels)
+          ? row.labels.map((l: any) => l?.name ?? "").filter(Boolean)
+          : [],
+      });
+    } catch (err) {
+      console.warn(`[upstream-watch] gh pr view #${n} failed; using stub: ${err}`);
+      out.push({
+        number: n,
+        title: `(override) PR #${n}`,
+        author: "",
+        mergedAt: "",
+        htmlUrl: "",
+        filesChanged: [],
+        labels: [],
+      });
+    }
+  }
+  return out;
+}
+
+
 export function fetchRecentPrs(args: {
   repo: string;
   sinceIso: string;
