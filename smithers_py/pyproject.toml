@@ -75,6 +75,7 @@ Changelog = "https://github.com/evmts/smithers/blob/main/smithers_py/CHANGELOG.m
 "runtime/prompts.py" = "smithers_py/runtime/prompts.py"
 "runtime/subprocess_agents.py" = "smithers_py/runtime/subprocess_agents.py"
 "runtime/supervisor.py" = "smithers_py/runtime/supervisor.py"
+"scorers" = "smithers_py/scorers"
 "serialize" = "smithers_py/serialize"
 "state" = "smithers_py/state"
 "tools" = "smithers_py/tools"

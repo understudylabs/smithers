@@ -214,6 +214,33 @@ from .tools import (
     write as tool_write,
 )
 
+# Scorers (eval hooks for task outputs)
+from .scorers import (
+    AggregateScore,
+    EmbedFn as ScorerEmbedFn,
+    JudgeFn,
+    RunScorersResult,
+    SamplingConfig,
+    SamplingKind,
+    ScoreLog,
+    ScoreResult,
+    ScoreRow,
+    Scorer,
+    ScorerBinding,
+    ScorerFn,
+    ScorerInput,
+    ScorersMap,
+    aggregate as aggregate_scores,
+    create_scorer,
+    faithfulness_scorer,
+    latency_scorer,
+    llm_judge,
+    relevancy_scorer,
+    run_scorers_async,
+    schema_adherence_scorer,
+    toxicity_scorer,
+)
+
 __all__ = [
     # Database
     'SmithersDB',
@@ -342,6 +369,30 @@ __all__ = [
     'tool_grep',
     'tool_read',
     'tool_write',
+    # Scorers
+    'AggregateScore',
+    'JudgeFn',
+    'RunScorersResult',
+    'SamplingConfig',
+    'SamplingKind',
+    'ScoreLog',
+    'ScoreResult',
+    'ScoreRow',
+    'Scorer',
+    'ScorerBinding',
+    'ScorerEmbedFn',
+    'ScorerFn',
+    'ScorerInput',
+    'ScorersMap',
+    'aggregate_scores',
+    'create_scorer',
+    'faithfulness_scorer',
+    'latency_scorer',
+    'llm_judge',
+    'relevancy_scorer',
+    'run_scorers_async',
+    'schema_adherence_scorer',
+    'toxicity_scorer',
 ]
 
 __version__ = '1.0.0'
