@@ -154,9 +154,13 @@ class TaskNode(NodeBase):
         exclude=True,
         description="Agent instance (ClaudeNode-compatible) or None for static tasks",
     )
-    prompt: Optional[str] = Field(
+    prompt: Optional[Any] = Field(
         default=None,
-        description="Prompt text passed to the agent (when ``agent`` is set)",
+        description=(
+            "Prompt body passed to the agent (when ``agent`` is set). "
+            "May be a string or a ``PromptTemplate``-like object whose "
+            "``.render()`` method returns the final string."
+        ),
     )
     render: Optional[Callable[[], Any]] = Field(
         default=None,
@@ -514,6 +518,92 @@ class MergeQueueNode(NodeBase):
     }
 
 
+# ----- Signal / WaitForEvent --------------------------------------------------
+
+
+class SignalNode(NodeBase):
+    """Emit a durable signal row.
+
+    Mirrors TS ``<Signal event={...} correlationId={...} payload={...}>``.
+    Used by a workflow to broadcast an event (e.g., "test-area-merged",
+    "ci-passed") that downstream nodes or external systems can react to.
+    Writes a row to ``ts_signals`` so the signal survives crashes and
+    can be queried later.
+
+    Combine with ``WaitForEventNode`` for inline pause-on-signal, or
+    with ``smithers-ts wait-for-event`` from another process. External
+    signals can also be delivered via ``smithers-ts signal`` for CI
+    or webhook integrations.
+    """
+
+    type: Literal["signal"] = "signal"
+    id: str = Field(..., description="Stable signal node identifier")
+    event: str = Field(..., description="Signal name (e.g., 'test-swarm:external-ci')")
+    correlation_id: Optional[str] = Field(
+        default=None,
+        description="Optional correlation key. Two signals with the same event but different correlation_ids are distinct.",
+        alias="correlationId",
+    )
+    payload: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="JSON-serializable payload delivered to the waiter.",
+    )
+
+    model_config = {
+        "extra": "allow",
+        "populate_by_name": True,
+    }
+
+
+class WaitForEventNode(NodeBase):
+    """Pause until a matching signal row exists.
+
+    Mirrors TS ``<WaitForEvent event={...} correlationId={...} output={...} timeoutMs={...} onTimeout={...}>``.
+    The workflow halts at this node; the runtime records a pending-wait
+    row and returns ``RunStatus.PAUSED``. Once a matching signal row is
+    visible in ``ts_signals`` (via inline ``SignalNode`` or external
+    ``smithers-ts signal``), the next resume continues and writes an
+    output row with the signal's payload.
+
+    ``on_timeout`` controls behavior when ``timeout_ms`` elapses without
+    a signal:
+        - "fail" (default): the workflow fails with a TimeoutError
+        - "skip": the wait is treated as satisfied with an empty payload
+        - "continue": same as "skip" but signaling intent more clearly
+    """
+
+    type: Literal["wait_for_event"] = "wait_for_event"
+    id: str = Field(..., description="Stable wait node identifier")
+    event: str
+    correlation_id: Optional[str] = Field(default=None, alias="correlationId")
+    output_target: Optional[OutputRef] = Field(
+        default=None,
+        description="OutputRef where the signal payload lands",
+        alias="output",
+    )
+    output_schema: Optional[Type[BaseModel]] = Field(
+        default=None,
+        exclude=True,
+        description="Inline schema when no OutputRef set",
+        alias="outputSchema",
+    )
+    timeout_ms: Optional[int] = Field(
+        default=None,
+        description="Max wait time in ms before the on_timeout policy fires",
+        alias="timeoutMs",
+    )
+    on_timeout: Literal["fail", "skip", "continue"] = Field(
+        default="fail",
+        alias="onTimeout",
+    )
+
+    model_config = {
+        "extra": "allow",
+        "arbitrary_types_allowed": True,
+        "populate_by_name": True,
+    }
+
+
 __all__ = [
     "OutputRef",
     "ApprovalRequest",
@@ -529,4 +619,6 @@ __all__ = [
     "BranchNode",
     "LoopNode",
     "TSRalphNode",
+    "SignalNode",
+    "WaitForEventNode",
 ]

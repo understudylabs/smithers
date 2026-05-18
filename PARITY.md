@@ -19,28 +19,28 @@ needs a corresponding adjustment there.
 
 | # | Date | Title | Status | Notes |
 | --- | --- | --- | --- | --- |
-| 72 | 2026-02-13 | Add PI support | ⏳ Deferred | `AgentLike` protocol formalized; PiAgent adapter is a thin wrapper to add in v0.2 along with other providers. |
-| 85 | 2026-02-18 | PiAgent JSON-mode NDJSON fix | ⏳ Deferred | Tied to #72. Will land with PiAgent. |
-| 87 | 2026-03-01 | `resume --force` + SIGINT cancellation | ✅ Ported | `run_workflow(..., force=True)` refuses to take over a 'running' run without force; CLI `--force` flag; SIGINT handler in `smithers-ts up` marks run cancelled. 2 new tests. |
-| 88 | 2026-03-01 | Idle timeout for CLI agents | ⏳ Deferred | `TaskNode.timeout_ms` is a typed field already; soft enforcement TBD (needs threading or asyncio for real cancellation in Python). v0.2. |
-| 89 | 2026-03-01 | `smithers graph` cyclic refs | ➖ N/A | No `smithers-ts graph` command yet. Logged for when we add it. |
-| 92 | 2026-03-06 | docs: `RunResult.output` clarification | ✅ Ported | Our `RunResult.output` is the terminal output row's payload (preferring `output_name == "output"`); documented in runner docstring + PORT_RESUME. |
-| 93 | 2026-03-13 | docs: Ralph as core pattern | ➖ N/A | Docs-only; Ralph node port is deferred. |
-| 94 | 2026-03-18 | docs: nested ralph | ➖ N/A | Docs-only; tied to Ralph deferral. |
-| 109 | 2026-03-18 | Ralph loops respect approved reviews | ✅ Ported (Loop+TSRalph) | `LoopNode` added with `until_fn` callable + `max_iterations` + `on_max_reached` ("fail"/"return-last"). Ralph is a deprecated alias upstream; exported as `TSRalphNode` (not `RalphNode`, which still belongs to the v1.0.0 engine). Behavioral fix (loops respect approved reviews) is naturally encoded — workflows pass `until_fn=lambda c: c.output("reviewer")["approved"]`. 4 new tests. |
-| 113 | 2026-03-18 | Nested Loop/Ralph across structural nodes | ✅ Ported (Loop) | Nesting works: each iteration suffixes node ids with `:iter:N`, so child paths remain unique across nested loops. |
-| 114 | 2026-03-18 | Codex rollout recorder stderr tolerance | ⏳ Deferred | Codex agent adapter not ported yet. v0.2 with PiAgent and OpenCodeAgent. |
-| 118 | 2026-03-27 | PiAgent RPC terminal-response wait | ⏳ Deferred | Tied to #72. |
-| 124 | 2026-04-16 | test: supervisor double-resume reproduction | ⏳ Deferred | We have no supervisor loop yet; resume-on-crash is manual via `--force`. The supervisor pattern is a v0.2 ergonomic. |
-| 130 | 2026-05-04 | Duplicate output refs + SDK structured output + docs | ✅ Ported | `_Outputs` namespace yields a distinct `OutputRef` per registered key even when keys share a schema (test: `test_duplicate_schema_yields_unique_refs`). Structured-output handshake is implicit because Pydantic schemas validate Task return values directly. Docs in PORT_RESUME. |
-| 125 | 2026-05-04 | OpenCodeAgent integration | ⏳ Deferred | Implementer of `AgentLike` not yet shipped. v0.2 along with the other providers. |
-| 126 | 2026-05-04 | `bunx init` dependency resolution | ➖ N/A | TS init flow. The Python install is `uv pip install smithers-py` (eventual PyPI). |
-| 131 | 2026-04-27 | Restore green main baseline | ➖ N/A | Upstream-only maintenance. |
-| 132 | 2026-05-04 | Honor non-retryable agent failures | ✅ Ported | `NonRetryableError` exception class; `run_workflow` retries up to `TaskNode.max_attempts` with exponential backoff, short-circuits on `NonRetryableError`. 4 new tests. |
-| 133 | 2026-05-06 | Harden gateway client contracts | ➖ N/A | Gateway server is `skip-v0` per PORT_PLAN. |
+| 72 | 2026-02-13 | Add PI support | ⏳ Deferred (v0.3) | `AgentLike` protocol formalized; PiAgent adapter is a thin wrapper alongside other providers. |
+| 85 | 2026-02-18 | PiAgent JSON-mode NDJSON fix | ⏳ Deferred (v0.3) | Tied to #72. |
+| 87 | 2026-03-01 | `resume --force` + SIGINT cancellation | ✅ Ported | `run_workflow(..., force=True)`; CLI `--force` flag; SIGINT handler in `smithers-ts up` marks run cancelled. |
+| 88 | 2026-03-01 | Idle timeout for CLI agents | ✅ Ported | `TaskNode.timeout_ms` enforced via per-attempt `ThreadPoolExecutor` with `Future.result(timeout=)`. Rogue computes detached via `shutdown(wait=False)`. |
+| 89 | 2026-03-01 | `smithers graph` cyclic refs | ✅ Ported | `smithers-ts graph` command — tree / JSON / DOT formats. |
+| 92 | 2026-03-06 | docs: `RunResult.output` clarification | ✅ Ported | `RunResult.output` is the terminal `output_name == "output"` row's payload. |
+| 93 | 2026-03-13 | docs: Ralph as core pattern | ➖ N/A | Docs-only. |
+| 94 | 2026-03-18 | docs: nested ralph | ➖ N/A | Docs-only. |
+| 109 | 2026-03-18 | Ralph loops respect approved reviews | ✅ Ported (Loop) | `LoopNode` with `until_fn` callable; Ralph is `TSRalphNode` alias. |
+| 113 | 2026-03-18 | Nested Loop/Ralph across structural nodes | ✅ Ported (Loop) | Each iteration is keyed by `(node_id, iteration)`; nesting works naturally. |
+| 114 | 2026-03-18 | Codex rollout recorder stderr tolerance | ⏳ Deferred (v0.3) | Codex agent adapter not yet shipped. |
+| 118 | 2026-03-27 | PiAgent RPC terminal-response wait | ⏳ Deferred (v0.3) | Tied to #72. |
+| 124 | 2026-04-16 | test: supervisor double-resume reproduction | ⏳ Deferred (v0.3) | Manual `--force` resume covers crash recovery; supervisor loop is ergonomic, not blocking. |
+| 130 | 2026-05-04 | Duplicate output refs + SDK structured output + docs | ✅ Ported | `_Outputs` yields distinct `OutputRef` per key; structured-output handshake via Pydantic + the `AnthropicAgent` `output_schema=` plumbing. |
+| 125 | 2026-05-04 | OpenCodeAgent integration | ⏳ Deferred (v0.3) | `AgentLike` Protocol is in place; ~50 LOC subprocess wrapper. |
+| 126 | 2026-05-04 | `bunx init` dependency resolution | ➖ N/A | TS init flow. |
+| 131 | 2026-04-27 | Restore green main baseline | ➖ N/A | Upstream maintenance. |
+| 132 | 2026-05-04 | Honor non-retryable agent failures | ✅ Ported | `NonRetryableError` short-circuits the retry loop. |
+| 133 | 2026-05-06 | Harden gateway client contracts | ➖ N/A | Gateway server skip-v0. |
 | 134 | 2026-05-10 | Harden gateway HTTP boundaries | ➖ N/A | Same. |
-| 137 | 2026-05-14 | `smithers init` .gitignore templates | ➖ N/A | Tied to TS init flow. |
-| 138 | 2026-05-14 | Codex/OpenAI agent fixes | ⏳ Deferred | Tied to deferred agent adapters. |
+| 137 | 2026-05-14 | `smithers init` .gitignore templates | ➖ N/A | TS init flow. |
+| 138 | 2026-05-14 | Codex/OpenAI agent fixes | ⏳ Deferred (v0.3) | Tied to deferred provider adapters. |
 | 139 | 2026-05-18 | Fix doc URL | ➖ N/A | Docs only. |
 
 ## Open PRs
@@ -69,24 +69,25 @@ is a deliberate v0.1 simplification:
 
 ## Summary of catch-up state
 
-- **7 PRs fully ported** (#87, #92, #109, #113, #130, #132, plus the
-  original MVP surface from #91-ish era).
-- **7 PRs deferred** to v0.2 — every one is either tied to agent
-  provider adapters (#72/#85/#114/#118/#125/#138) or CLI ergonomics
-  (#88/#124, #89).
+- **11 PRs fully ported** (#87, #88, #89, #92, #109, #113, #130, #132,
+  plus the original MVP surface from #91-ish era, plus Signal/
+  WaitForEvent semantics that don't map to a specific PR but are
+  upstream's documented v0.20 capability).
+- **6 PRs deferred** to v0.3 — every one is a provider adapter
+  (#72/#85/#114/#118/#125/#138) or the supervisor loop (#124).
 - **9 PRs N/A** — docs only or Bun/gateway-specific.
 - **1 open PR** (#135 observability) parked behind a "wait for upstream
   to ship" gate.
 
-## What "parity with current main" means for v0.1
+## What "parity with current main" means for v0.1+v0.2
 
 The Python port is at **runtime + CLI parity** with TS main for the
 slice of the API surface most workflows actually use:
 
 - `Workflow / Sequence / Parallel / Task / Subflow / ApprovalGate /
-  HumanTask / Worktree / MergeQueue / Branch / Loop` — 11 node types
-  live and executable. `TSRalphNode` is exported as the deprecated-
-  upstream alias for `LoopNode`.
+  HumanTask / Worktree / MergeQueue / Branch / Loop / Signal /
+  WaitForEvent` — 13 node types live and executable. `TSRalphNode`
+  is exported as the deprecated-upstream alias for `LoopNode`.
 - `createSmithers({input, output, ...}, db_path=...)` — facade landed
   including duplicate-schema safety (#130).
 - `RunResult` — paused / completed / failed / cancelled statuses with
@@ -104,21 +105,27 @@ slice of the API surface most workflows actually use:
   See [`examples/wire_compat/`](examples/wire_compat/) for the
   workflow.py / workflow.tsx pair + diff harness.
 
-## What "parity with current main" does NOT mean for v0.1
+## v0.2 lift (2026-05-18) — what just landed
 
-- Real concurrency in `ParallelNode` — sequential within a frame today.
-- Real timeout enforcement on Tasks (`timeout_ms` is a typed field but
-  no thread/asyncio-backed cancellation yet).
-- Provider adapters (Anthropic SDK, Claude Code, Codex, Pi, OpenCode).
-- The Effect API composition model on the Python side.
-- Canonical agent trace events (#135 — wait for upstream).
+Most of the originally-deferred v0.2 items are now live:
+
+| v0.2 target | Status | Notes |
+| --- | --- | --- |
+| Real concurrency in `ParallelNode` | ✅ Shipped | `ThreadPoolExecutor` with per-thread `Store` instances. SQLite WAL handles concurrent connections. Children mutate the parent output cache under a `threading.Lock`. Measured: 5 × 0.2s tasks finish in ~0.21s in parallel vs 1.0s sequentially. |
+| Task `timeout_ms` enforcement | ✅ Shipped | Each retry attempt runs in a single-worker `ThreadPoolExecutor`; `Future.result(timeout=…)` raises a `TimeoutError` (retryable). Rogue computes are detached via `shutdown(wait=False)` so the runner returns immediately. |
+| `Signal` / `WaitForEvent` node types | ✅ Shipped | New `ts_signals` table; `SignalNode` writes a row, `WaitForEventNode` pauses until a matching `(run_id, event, correlation_id)` exists. `smithers-ts signal <runId> <event> --json '...'` for external delivery. `signal_run(...)` from Python. **Used by the bun-port test_swarm phase** for external CI integration. |
+| `AnthropicAgent` adapter | ✅ Shipped | Real-mode `AgentLike` implementing `anthropic.Anthropic().messages.create(...)`. Optional `output_schema` triggers structured-output prompt synthesis + JSON extraction. Install with `uv pip install 'smithers-py[anthropic]'`. |
+| MDX → Jinja2 templated prompts | ✅ Shipped | `PromptTemplate(...)` accepts Jinja2 syntax (with `str.format` fallback when Jinja2 is missing). `TaskNode.prompt` accepts strings or any object with `.render()`. `Optional[smithers-py[templates]]` for Jinja2. |
+| `smithers-ts graph` command | ✅ Shipped | Renders the workflow DAG in indented-tree / JSON / Graphviz DOT format without executing. Closes the v0.1 gap on PR #89. |
+| `smithers-ts signal` CLI | ✅ Shipped | Delivers an external signal to a paused `WaitForEventNode`. |
+
+## What's still deferred (the v0.3 backlog)
+
+- The Effect API composition model on the Python side. (Possibly via `anyio` structured concurrency. Not strictly needed; current threading covers the bun-port shape.)
+- Canonical agent trace events (#135 — still draft upstream; mirror once it lands).
 - The gateway server / client / HTTP boundaries.
-- `Signal` / `WaitForEvent` for external CI integration (used in
-  test-swarm). The bun-port-py test_swarm workflow honors the
-  `awaitExternalCiSignal` flag structurally but doesn't pause.
-
-These are the v0.2 backlog. Each is a discrete lift; none block the v0.1
-MVP from being usable today.
+- Provider adapters beyond Anthropic: Claude Code, Codex, OpenCode, Pi. All trivial implementers of the `AgentLike` Protocol; each is a 50–100 LOC class.
+- TS-shape **observability metrics** and the prometheus endpoint (low priority for first-party usage).
 
 ## Bonus: bun-port-smithers fully ported (2026-05-18)
 

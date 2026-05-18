@@ -232,6 +232,114 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_graph(args: argparse.Namespace) -> int:
+    """Render a workflow's DAG without executing it.
+
+    Mirrors upstream's ``smithers graph``. Loads the workflow file,
+    constructs the WorkflowNode tree from a stub context, then prints
+    it as either an indented text tree (default), JSON, or Graphviz DOT.
+
+    Closes the v0.1 gap that upstream PR #89 fixed on the TS side
+    (cyclic-reference handling in graph output).
+    """
+    module = _load_workflow_module(args.workflow_file)
+    workflow_fn = _resolve_workflow(module, args.workflow)
+    input_payload = _load_input(args.input) if args.input else {}
+
+    # Stub ctx that just exposes input + a no-op output() helper.
+    config = getattr(workflow_fn, "_smithers_config", None)
+    if config is not None and "input" in config.schemas:
+        try:
+            input_payload = config.schemas["input"].model_validate(input_payload)
+        except Exception as exc:  # noqa: BLE001 - surface the validation error
+            print(
+                f"smithers-ts graph: input validation failed: {exc}\n"
+                "Pass a sample input via --input '{...}' or @file.json",
+                file=sys.stderr,
+            )
+            return 2
+
+    class _StubCtx:
+        def __init__(self, input_payload):
+            self.input = input_payload
+
+        def output(self, _name: str) -> None:
+            return None
+
+        def outputMaybe(self, _ref, **_kwargs) -> None:
+            return None
+
+    tree = workflow_fn(_StubCtx(input_payload))
+
+    if args.format == "json":
+        # Pydantic's model_dump on the discriminated union preserves
+        # type tags. Sufficient for static graph inspection.
+        try:
+            payload = tree.model_dump(mode="json")
+        except Exception as exc:  # noqa: BLE001
+            payload = {"error": f"could not dump tree: {exc}"}
+        print(json.dumps(payload, indent=2, default=str))
+        return 0
+
+    if args.format == "dot":
+        lines = ["digraph smithers_workflow {", '  rankdir="TB";']
+        _emit_dot(tree, lines, parent_id=None, counter=[0])
+        lines.append("}")
+        print("\n".join(lines))
+        return 0
+
+    # Default: indented text tree.
+    _print_tree(tree, indent=0)
+    return 0
+
+
+def _print_tree(node: Any, indent: int) -> None:
+    node_type = getattr(node, "type", type(node).__name__)
+    bits = [node_type]
+    for attr in ("id", "name", "event", "condition", "max_concurrency", "max_iterations"):
+        val = getattr(node, attr, None)
+        if val is not None and val != "":
+            bits.append(f"{attr}={val!r}")
+    out_target = getattr(node, "output_target", None)
+    if out_target is not None:
+        bits.append(f"output={getattr(out_target, 'name', '?')!r}")
+    print("  " * indent + "├─ " + " ".join(bits) if indent else "" + " ".join(bits))
+    children = getattr(node, "children", None) or []
+    for child in children:
+        _print_tree(child, indent + 1)
+    # Branch has then_child / else_child instead of generic children.
+    then_child = getattr(node, "then_child", None)
+    if then_child is not None:
+        print("  " * indent + "├─ (then)")
+        _print_tree(then_child, indent + 1)
+    else_child = getattr(node, "else_child", None)
+    if else_child is not None:
+        print("  " * indent + "├─ (else)")
+        _print_tree(else_child, indent + 1)
+
+
+def _emit_dot(node: Any, lines: List[str], parent_id: Optional[str], counter: List[int]) -> None:
+    counter[0] += 1
+    my_id = f"n{counter[0]}"
+    node_type = getattr(node, "type", type(node).__name__)
+    label_bits = [node_type]
+    nid = getattr(node, "id", None)
+    if nid:
+        label_bits.append(nid)
+    label = "\\n".join(label_bits)
+    lines.append(f'  {my_id} [label="{label}"];')
+    if parent_id is not None:
+        lines.append(f"  {parent_id} -> {my_id};")
+    for child in (getattr(node, "children", None) or []):
+        _emit_dot(child, lines, my_id, counter)
+    then_child = getattr(node, "then_child", None)
+    if then_child is not None:
+        _emit_dot(then_child, lines, my_id, counter)
+    else_child = getattr(node, "else_child", None)
+    if else_child is not None:
+        _emit_dot(else_child, lines, my_id, counter)
+
+
 def cmd_ps(args: argparse.Namespace) -> int:
     rows = list_runs(db_path=args.db, status=args.status, limit=args.limit)
     if args.json:
@@ -345,7 +453,62 @@ def _build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--json", action="store_true")
     ps.set_defaults(func=cmd_ps)
 
+    graph = sub.add_parser(
+        "graph",
+        help="Render a workflow's DAG without executing it",
+    )
+    graph.add_argument("workflow_file", help="Path to a workflow file")
+    graph.add_argument("--workflow", help="Workflow function name (multi-workflow modules)")
+    graph.add_argument(
+        "--input",
+        "-i",
+        help="Input JSON (or @file.json). Required if the workflow inspects ctx.input.",
+    )
+    graph.add_argument(
+        "--format",
+        choices=["tree", "json", "dot"],
+        default="tree",
+        help="Output format: indented tree (default), JSON dump, or Graphviz DOT",
+    )
+    graph.set_defaults(func=cmd_graph)
+
+    signal = sub.add_parser(
+        "signal",
+        help="Deliver a durable signal to a run waiting on WaitForEvent",
+    )
+    signal.add_argument("run_id")
+    signal.add_argument("event")
+    signal.add_argument("--correlation-id", default=None)
+    signal.add_argument(
+        "--json",
+        dest="payload_json",
+        help="Signal payload as JSON",
+        default="{}",
+    )
+    signal.set_defaults(func=cmd_signal)
+
     return parser
+
+
+def cmd_signal(args: argparse.Namespace) -> int:
+    """Deliver an external signal to a run."""
+    from .runner import signal_run
+
+    try:
+        payload = json.loads(args.payload_json)
+    except json.JSONDecodeError as exc:
+        print(f"--json payload not valid JSON: {exc}", file=sys.stderr)
+        return 2
+    row = signal_run(
+        args.run_id,
+        event=args.event,
+        db_path=args.db,
+        correlation_id=args.correlation_id,
+        payload=payload,
+        source="cli",
+    )
+    print(json.dumps(row.__dict__, indent=2, default=str))
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:

@@ -47,6 +47,8 @@ from .nodes import (
     BranchNode,
     LoopNode,
     TSRalphNode,
+    SignalNode,
+    WaitForEventNode,
 )
 
 # TS-compatible facade
@@ -60,9 +62,11 @@ from .facade import (
 from .runtime import (
     AgentLike,
     AgentResult,
+    AnthropicAgent,
     AsyncAgentLike,
     DryAgent,
     NonRetryableError,
+    PromptTemplate,
     RunResult,
     RunStatus,
     Store,
@@ -72,6 +76,7 @@ from .runtime import (
     inspect_run,
     list_runs,
     run_workflow,
+    signal_run,
 )
 
 # Engine - tick loop and context

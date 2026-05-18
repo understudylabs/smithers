@@ -13,7 +13,9 @@ semantics are out of MVP scope.
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
+import threading
 import time
 import traceback
 import uuid
@@ -32,12 +34,14 @@ from ..nodes.ts_compat import (
     OutputRef,
     ParallelNode,
     SequenceNode,
+    SignalNode,
     SubflowNode,
     TaskNode,
+    WaitForEventNode,
     WorkflowNode,
     WorktreeNode,
 )
-from .store import ApprovalRow, Store, WorkflowApprovalError
+from .store import ApprovalRow, SignalRow, Store, WorkflowApprovalError
 
 
 # ----- Public types -----------------------------------------------------------
@@ -291,8 +295,7 @@ def _walk(node: Any, ctx: _Ctx, iteration: int = 0) -> _WalkResult:
         return _walk_children(node.children, ctx, iteration)
 
     if isinstance(node, ParallelNode):
-        # MVP: still sequential within a frame. Real concurrency is v0.2.
-        return _walk_children(node.children, ctx, iteration)
+        return _walk_parallel(node, ctx, iteration)
 
     if isinstance(node, (WorktreeNode, MergeQueueNode)):
         # Honor structurally; real VCS/queue semantics are a v0.2 concern.
@@ -316,6 +319,12 @@ def _walk(node: Any, ctx: _Ctx, iteration: int = 0) -> _WalkResult:
     if isinstance(node, LoopNode):
         return _run_loop(node, ctx)
 
+    if isinstance(node, SignalNode):
+        return _run_signal(node, ctx)
+
+    if isinstance(node, WaitForEventNode):
+        return _run_wait_for_event(node, ctx)
+
     # Anything else (existing v1.0.0 nodes) is treated as a pass-through
     # container for the MVP — walk children if any. Engine integration
     # for the v1.0.0 nodes is a separate piece of work.
@@ -333,6 +342,76 @@ def _walk_children(
         if result.paused:
             return _WalkResult(paused=True, pending_approvals=accumulated_pending)
     return _WalkResult(paused=False, pending_approvals=accumulated_pending)
+
+
+def _walk_parallel(
+    node: ParallelNode, ctx: _Ctx, iteration: int = 0
+) -> _WalkResult:
+    """Execute children concurrently via ThreadPoolExecutor.
+
+    SQLite WAL handles concurrent connections from multiple threads; each
+    thread gets its own ``Store`` instance pointed at the same DB. Output
+    rows land under their unique ``(run_id, node_id, iteration)`` so
+    threads don't fight over PK collisions.
+
+    Mid-flight reads (``ctx.output(id)``) fall through to the DB when the
+    in-memory cache misses — sufficient for cross-thread visibility
+    because SQLite WAL gives strong read-after-write consistency on
+    committed rows.
+
+    Falls back to sequential walk when ``max_concurrency`` is 1 or there
+    are 0–1 children; the threading overhead isn't worth it.
+    """
+    children = list(node.children)
+    if len(children) <= 1 or node.max_concurrency <= 1:
+        return _walk_children(children, ctx, iteration)
+
+    accumulated_pending: List[ApprovalRow] = []
+    paused = False
+    exceptions: List[BaseException] = []
+    cache_lock = threading.Lock()
+
+    def _run_child_in_thread(child: Any) -> _WalkResult:
+        # Thread-local Store with its own sqlite3 connection.
+        local_store = Store(ctx.store.db_path)
+        local_store.connect()
+        try:
+            thread_ctx = _Ctx(
+                input=ctx.input,
+                run_id=ctx.run_id,
+                store=local_store,
+            )
+            result = _walk(child, thread_ctx, iteration)
+            # Merge new entries into the parent cache under a lock so
+            # downstream Sequence steps see all sibling outputs.
+            with cache_lock:
+                for k, v in thread_ctx._output_cache.items():
+                    ctx._output_cache.setdefault(k, v)
+            return result
+        finally:
+            local_store.close()
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=node.max_concurrency
+    ) as ex:
+        futures = [ex.submit(_run_child_in_thread, c) for c in children]
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                result = fut.result()
+            except BaseException as exc:  # noqa: BLE001 - re-raise after all settle
+                exceptions.append(exc)
+                continue
+            accumulated_pending.extend(result.pending_approvals)
+            if result.paused:
+                paused = True
+
+    if exceptions:
+        # Re-raise the first exception. Other failures are documented in
+        # the run's row state (each thread's output row writes are
+        # independent and have already landed).
+        raise exceptions[0]
+
+    return _WalkResult(paused=paused, pending_approvals=accumulated_pending)
 
 
 def _run_task(node: TaskNode, ctx: _Ctx, iteration: int = 0) -> _WalkResult:
@@ -363,21 +442,32 @@ def _run_task(node: TaskNode, ctx: _Ctx, iteration: int = 0) -> _WalkResult:
 
 
 def _compute_with_retry(node: TaskNode, node_id: str) -> Dict[str, Any]:
-    """Run ``_compute_task_payload`` with retry policy.
+    """Run ``_compute_task_payload`` with retry policy + timeout enforcement.
 
     Honors ``node.max_attempts`` with exponential backoff (0.5s, 1s, 2s, …
-    capped at 30s). ``NonRetryableError`` short-circuits the loop. Schema
-    / validation errors (``WorkflowError``) also bypass retries because
-    they describe deterministic faults, not transient ones.
+    capped at 30s). ``NonRetryableError`` short-circuits the loop.
+    Schema/validation errors (``WorkflowError``) also bypass retries.
 
-    The backoff is configurable via ``SMITHERS_TS_RETRY_BACKOFF_BASE`` (env)
-    so tests can pin it to 0 without changing call sites.
+    ``node.timeout_ms`` enforces per-attempt timeout via a single-worker
+    ThreadPoolExecutor + ``Future.result(timeout=)``. Timeout failures
+    are retryable; a task that exhausts ``max_attempts`` on timeouts
+    fails the run with the last TimeoutError attached.
+
+    Python can't safely cancel a running thread once it's started, so a
+    timed-out compute keeps running in the background — but it won't
+    block the workflow's progress because we've moved on to the next
+    attempt or the next node. The rogue thread eventually exits when
+    its work finishes (and any state it would have written is discarded
+    since we already wrote a different output row).
     """
     base = float(os.environ.get("SMITHERS_TS_RETRY_BACKOFF_BASE", "0.5"))
+    timeout_seconds: Optional[float] = (
+        node.timeout_ms / 1000.0 if node.timeout_ms else None
+    )
     last_exc: Optional[BaseException] = None
     for attempt in range(1, max(1, node.max_attempts) + 1):
         try:
-            return _compute_task_payload(node)
+            return _compute_with_timeout(node, timeout_seconds)
         except NonRetryableError as exc:
             raise WorkflowError(
                 f"Task {node.id!r} failed non-retryably"
@@ -403,7 +493,67 @@ def _compute_with_retry(node: TaskNode, node_id: str) -> Dict[str, Any]:
     ) from last_exc
 
 
+def _invoke_agent_generate(
+    generate: Callable[..., Any],
+    prompt: str,
+    schema: Optional[type],
+) -> Any:
+    """Call ``agent.generate(prompt=..., output_schema=...)`` defensively.
+
+    Spec'd agents (``AgentLike``) accept ``**kwargs`` and tolerate the
+    extra ``output_schema`` arg. Less-disciplined dry agents in tests
+    may have signatures that only accept ``prompt``. Try the schema-
+    aware call first; fall back if the agent doesn't accept it.
+    """
+    if schema is not None:
+        try:
+            return generate(prompt=prompt, output_schema=schema)
+        except TypeError:
+            # Agent's generate doesn't accept output_schema — re-call
+            # without it. Real schema validation still happens in
+            # _validate_payload after we get the result.
+            pass
+    return generate(prompt=prompt)
+
+
+def _compute_with_timeout(
+    node: TaskNode, timeout_seconds: Optional[float]
+) -> Dict[str, Any]:
+    """Run the compute in a worker thread so ``timeout_seconds`` actually fires.
+
+    No timeout → call inline (avoids the ThreadPoolExecutor overhead).
+    With timeout → submit + ``.result(timeout=...)``. On timeout, raise
+    a Python ``TimeoutError`` which the retry loop treats as transient.
+
+    Note on detachment: ``shutdown(wait=False)`` lets the timed-out
+    thread keep running in the background and the runner returns
+    immediately. Python can't safely interrupt a running thread, so the
+    rogue compute will eventually finish on its own; any state it would
+    have written gets discarded because the runner has moved on. Daemon
+    threads ensure the process can still exit even if the rogue compute
+    never returns.
+    """
+    if timeout_seconds is None or timeout_seconds <= 0:
+        return _compute_task_payload(node)
+    ex = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="smithers-task-timeout"
+    )
+    fut = ex.submit(_compute_task_payload, node)
+    try:
+        result = fut.result(timeout=timeout_seconds)
+        ex.shutdown(wait=False)
+        return result
+    except concurrent.futures.TimeoutError as exc:
+        # Detach: don't wait for the rogue compute to finish.
+        ex.shutdown(wait=False)
+        raise TimeoutError(
+            f"Task {node.id!r} exceeded timeout_ms={node.timeout_ms}"
+        ) from exc
+
+
 def _compute_task_payload(node: TaskNode) -> Dict[str, Any]:
+    from .prompts import render_prompt
+
     if node.render is not None:
         result = node.render()
         return _to_dict(result)
@@ -413,7 +563,9 @@ def _compute_task_payload(node: TaskNode) -> Dict[str, Any]:
             raise WorkflowError(
                 f"TaskNode {node.id!r}.agent has no .generate(prompt=...) method"
             )
-        produced = generate(prompt=node.prompt or "")
+        prompt_str = render_prompt(node.prompt)
+        schema = _resolve_schema(node)
+        produced = _invoke_agent_generate(generate, prompt_str, schema)
         if isinstance(produced, dict) and "output" in produced:
             return _to_dict(produced["output"])
         return _to_dict(produced)
@@ -606,6 +758,97 @@ def _run_loop(node: LoopNode, ctx: _Ctx) -> _WalkResult:
     return _WalkResult(pending_approvals=accumulated_pending)
 
 
+def _run_signal(node: SignalNode, ctx: _Ctx) -> _WalkResult:
+    """Emit a durable signal row.
+
+    Idempotent on resume: if a signal with the same (run_id, event,
+    correlation_id) already exists, do not write a duplicate.
+    """
+    existing = ctx.store.find_signal(
+        ctx.run_id,
+        event=node.event,
+        correlation_id=node.correlation_id,
+    )
+    if existing is None:
+        ctx.store.insert_signal(
+            ctx.run_id,
+            event=node.event,
+            correlation_id=node.correlation_id,
+            payload=node.payload,
+            source="inline",
+        )
+    return _WalkResult()
+
+
+def _run_wait_for_event(node: WaitForEventNode, ctx: _Ctx) -> _WalkResult:
+    """Pause until a matching signal row exists.
+
+    Resume: if the signal already arrived, write the output row and
+    continue. Otherwise return paused; the caller's next resume will
+    re-evaluate.
+    """
+    node_id = node.id
+
+    existing_out = ctx.store.get_output_row(ctx.run_id, node_id)
+    if existing_out is not None:
+        ctx._output_cache[node_id] = existing_out.payload
+        return _WalkResult()
+
+    signal = ctx.store.find_signal(
+        ctx.run_id,
+        event=node.event,
+        correlation_id=node.correlation_id,
+    )
+    if signal is None:
+        # Not yet arrived — pause as a synthetic approval-shaped row so
+        # smithers-ts ps / inspect can surface what we're waiting on.
+        approval = ctx.store.insert_approval(
+            ctx.run_id,
+            node_id,
+            kind="wait_for_event",
+            title=f"WaitForEvent {node.event}",
+            summary=(
+                f"correlation_id={node.correlation_id or '(any)'}"
+                if node.correlation_id
+                else f"event={node.event}"
+            ),
+            metadata={
+                "event": node.event,
+                "correlation_id": node.correlation_id,
+            },
+            output_name=node.output_target.name if node.output_target else None,
+            on_deny="fail",
+        )
+        return _WalkResult(paused=True, pending_approvals=[approval])
+
+    # Signal arrived — validate payload and write output row.
+    payload: Dict[str, Any] = dict(signal.payload)
+    schema = (
+        node.output_target.schema_ if node.output_target else node.output_schema
+    )
+    if schema is not None:
+        try:
+            validated = schema.model_validate(payload)
+            payload = validated.model_dump(by_alias=True, exclude_none=False)
+        except ValidationError as exc:
+            raise WorkflowError(
+                f"WaitForEvent {node.id!r} payload failed schema validation: {exc}",
+                node_id=node_id,
+            ) from exc
+    schema_version = (
+        payload.get("schema_version") if isinstance(payload, dict) else None
+    )
+    ctx.store.insert_output_row(
+        ctx.run_id,
+        node_id,
+        payload,
+        schema_version=schema_version,
+        output_name=node.output_target.name if node.output_target else None,
+    )
+    ctx._output_cache[node_id] = payload
+    return _WalkResult()
+
+
 def _run_human_task(
     node: HumanTaskNode, ctx: _Ctx
 ) -> _WalkResult:
@@ -722,6 +965,37 @@ def inspect_run(run_id: str, *, db_path: str = "smithers.db") -> Dict[str, Any]:
             a.__dict__ for a in store.list_pending_approvals(run_id)
         ],
     }
+
+
+def signal_run(
+    run_id: str,
+    *,
+    event: str,
+    db_path: str = "smithers.db",
+    correlation_id: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    source: str = "external",
+) -> SignalRow:
+    """Deliver a durable signal to a run waiting on ``WaitForEventNode``.
+
+    Mirrors upstream ``smithers signal``. Idempotent: re-issuing the
+    same (event, correlation_id) returns the original row rather than
+    writing a duplicate.
+    """
+    store = Store(db_path)
+    store.connect()
+    existing = store.find_signal(
+        run_id, event=event, correlation_id=correlation_id
+    )
+    if existing is not None:
+        return existing
+    return store.insert_signal(
+        run_id,
+        event=event,
+        correlation_id=correlation_id,
+        payload=payload or {},
+        source=source,
+    )
 
 
 def list_runs(

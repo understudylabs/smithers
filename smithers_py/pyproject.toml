@@ -31,6 +31,9 @@ dependencies = [
 
 [project.optional-dependencies]
 jsx = ["python-jsx"]
+# Real-mode agents — install with `uv pip install -e '.[anthropic]'`.
+anthropic = ["anthropic>=0.40.0"]
+templates = ["jinja2>=3.0"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=1.0",
@@ -68,6 +71,7 @@ Changelog = "https://github.com/evmts/smithers/blob/main/smithers_py/CHANGELOG.m
 "nodes" = "smithers_py/nodes"
 "runtime" = "smithers_py/runtime"
 "runtime/agents.py" = "smithers_py/runtime/agents.py"
+"runtime/prompts.py" = "smithers_py/runtime/prompts.py"
 "serialize" = "smithers_py/serialize"
 "state" = "smithers_py/state"
 "vcs" = "smithers_py/vcs"

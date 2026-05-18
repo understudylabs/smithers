@@ -79,6 +79,19 @@ CREATE TABLE IF NOT EXISTS ts_approvals (
 
 CREATE INDEX IF NOT EXISTS idx_ts_approvals_run ON ts_approvals(run_id);
 CREATE INDEX IF NOT EXISTS idx_ts_approvals_status ON ts_approvals(status);
+
+CREATE TABLE IF NOT EXISTS ts_signals (
+    signal_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    event TEXT NOT NULL,
+    correlation_id TEXT,
+    payload_json TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    source TEXT NOT NULL DEFAULT 'inline'
+);
+
+CREATE INDEX IF NOT EXISTS idx_ts_signals_run ON ts_signals(run_id);
+CREATE INDEX IF NOT EXISTS idx_ts_signals_event ON ts_signals(run_id, event, correlation_id);
 """
 
 
@@ -105,6 +118,17 @@ class OutputRow:
     output_name: Optional[str]
     payload: Dict[str, Any]
     created_at: float
+
+
+@dataclass
+class SignalRow:
+    signal_id: str
+    run_id: str
+    event: str
+    correlation_id: Optional[str]
+    payload: Dict[str, Any]
+    created_at: float
+    source: str
 
 
 @dataclass
@@ -410,6 +434,86 @@ class Store:
                 (run_id,),
             )
             return [_row_to_approval(r) for r in cur.fetchall()]
+
+    # ----- Signals -----------------------------------------------------------
+
+    def insert_signal(
+        self,
+        run_id: str,
+        *,
+        event: str,
+        correlation_id: Optional[str],
+        payload: Dict[str, Any],
+        source: str = "inline",
+    ) -> SignalRow:
+        signal_id = f"sig-{uuid.uuid4().hex[:12]}"
+        now = time.time()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO ts_signals
+                    (signal_id, run_id, event, correlation_id, payload_json,
+                     created_at, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal_id,
+                    run_id,
+                    event,
+                    correlation_id,
+                    json.dumps(payload, default=_json_default),
+                    now,
+                    source,
+                ),
+            )
+        return SignalRow(
+            signal_id=signal_id,
+            run_id=run_id,
+            event=event,
+            correlation_id=correlation_id,
+            payload=payload,
+            created_at=now,
+            source=source,
+        )
+
+    def find_signal(
+        self,
+        run_id: str,
+        *,
+        event: str,
+        correlation_id: Optional[str] = None,
+    ) -> Optional[SignalRow]:
+        with self.cursor() as cur:
+            if correlation_id is None:
+                cur.execute(
+                    """
+                    SELECT * FROM ts_signals
+                     WHERE run_id = ? AND event = ?
+                     ORDER BY created_at ASC LIMIT 1
+                    """,
+                    (run_id, event),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT * FROM ts_signals
+                     WHERE run_id = ? AND event = ? AND correlation_id = ?
+                     ORDER BY created_at ASC LIMIT 1
+                    """,
+                    (run_id, event, correlation_id),
+                )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return SignalRow(
+                signal_id=row["signal_id"],
+                run_id=row["run_id"],
+                event=row["event"],
+                correlation_id=row["correlation_id"],
+                payload=json.loads(row["payload_json"]),
+                created_at=row["created_at"],
+                source=row["source"],
+            )
 
     def resolve_approval(
         self,

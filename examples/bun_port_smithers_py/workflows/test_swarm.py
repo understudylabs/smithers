@@ -7,9 +7,10 @@ for the v0.1 runtime:
 - WorktreeNode wraps each area's runs (structural pass-through in v0.1).
 - MergeQueueNode serializes merges of green areas (structural pass-
   through in v0.1).
-- Signal/WaitForEvent for external CI is deferred to v0.2 — the runtime
-  doesn't have Signal/WaitForEvent node types yet. ``awaitExternalCiSignal``
-  in the input is honored as a flag but the workflow doesn't actually wait.
+- ``awaitExternalCiSignal=True`` inserts a ``WaitForEventNode`` after
+  the merge queue. The workflow pauses until ``smithers-ts signal
+  <runId> <ciCorrelationId> --json '{"status":"passed","url":"..."}'``
+  delivers the external CI verdict.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from smithers_py import (
     ParallelNode,
     SequenceNode,
     TaskNode,
+    WaitForEventNode,
     WorkflowNode,
     WorktreeNode,
     create_smithers,
@@ -30,6 +32,7 @@ from smithers_py import (
 from ..components.agents import agents_for_repo
 from ..components.porting_rules import stable_node_id
 from ..components.schemas import (
+    CiSignal,
     MergeResult,
     PhaseDone,
     TestAreaResult,
@@ -43,6 +46,7 @@ CONFIG = create_smithers(
         "input": TestSwarmInput,
         "testAreaResult": TestAreaResult,
         "mergeResult": MergeResult,
+        "ciSignal": CiSignal,
         "testSwarmReport": TestSwarmReport,
         "output": PhaseDone,
     }
@@ -150,13 +154,21 @@ def test_swarm(ctx: Any) -> WorkflowNode:
         render=_emit_done,
     )
 
+    sequence_children: List[Any] = [parallel_areas, merge_queue]
+    if ctx.input.awaitExternalCiSignal:
+        sequence_children.append(
+            WaitForEventNode(
+                id="test-swarm:external-ci",
+                event=ctx.input.ciCorrelationId,
+                output=outputs.ciSignal,
+                onTimeout="fail",
+            )
+        )
+    sequence_children.extend([report_task, output_task])
+
     return WorkflowNode(
         name="bun-port-py-tests",
-        children=[
-            SequenceNode(
-                children=[parallel_areas, merge_queue, report_task, output_task]
-            )
-        ],
+        children=[SequenceNode(children=sequence_children)],
     )
 
 
