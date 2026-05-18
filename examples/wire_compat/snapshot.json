@@ -1,0 +1,141 @@
+[
+  {
+    "node_id": "main/branch:br/then/branch-then",
+    "schema_version": "wire-compat-step-v0",
+    "output_name": "branch_step",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-step-v0",
+      "step": "branch-then",
+      "value": 1
+    }
+  },
+  {
+    "node_id": "main/final",
+    "schema_version": "wire-compat-final-v0",
+    "output_name": "output",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-final-v0",
+      "workload": "snapshot",
+      "sequence_total": 300,
+      "parallel_total": 60,
+      "branch_step": "branch-then",
+      "loop_iterations": 3
+    }
+  },
+  {
+    "node_id": "main/gate",
+    "schema_version": "smithers-py-approval-v0",
+    "output_name": null,
+    "iteration": 0,
+    "payload": {
+      "approved": true,
+      "auto": true,
+      "node_id": "gate"
+    }
+  },
+  {
+    "node_id": "main/loop:loop/iter:0/loop-step",
+    "schema_version": "wire-compat-step-v0",
+    "output_name": "loop_step",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-step-v0",
+      "step": "loop-tick",
+      "value": 1
+    }
+  },
+  {
+    "node_id": "main/loop:loop/iter:1/loop-step",
+    "schema_version": "wire-compat-step-v0",
+    "output_name": "loop_step",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-step-v0",
+      "step": "loop-tick",
+      "value": 1
+    }
+  },
+  {
+    "node_id": "main/loop:loop/iter:2/loop-step",
+    "schema_version": "wire-compat-step-v0",
+    "output_name": "loop_step",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-step-v0",
+      "step": "loop-tick",
+      "value": 1
+    }
+  },
+  {
+    "node_id": "main/par-1",
+    "schema_version": "wire-compat-step-v0",
+    "output_name": "par1",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-step-v0",
+      "step": "par-1",
+      "value": 10
+    }
+  },
+  {
+    "node_id": "main/par-2",
+    "schema_version": "wire-compat-step-v0",
+    "output_name": "par2",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-step-v0",
+      "step": "par-2",
+      "value": 20
+    }
+  },
+  {
+    "node_id": "main/par-3",
+    "schema_version": "wire-compat-step-v0",
+    "output_name": "par3",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-step-v0",
+      "step": "par-3",
+      "value": 30
+    }
+  },
+  {
+    "node_id": "main/seq-1",
+    "schema_version": "wire-compat-step-v0",
+    "output_name": "seq1",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-step-v0",
+      "step": "seq-1",
+      "value": 100
+    }
+  },
+  {
+    "node_id": "main/seq-2",
+    "schema_version": "wire-compat-step-v0",
+    "output_name": "seq2",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-step-v0",
+      "step": "seq-2",
+      "value": 200
+    }
+  },
+  {
+    "node_id": "main/sub",
+    "schema_version": "wire-compat-child-v0",
+    "output_name": "child_out",
+    "iteration": 0,
+    "payload": {
+      "schema_version": "wire-compat-child-v0",
+      "label": "child-of-snapshot",
+      "payload": [
+        "alpha",
+        "beta",
+        "gamma"
+      ]
+    }
+  }
+]
