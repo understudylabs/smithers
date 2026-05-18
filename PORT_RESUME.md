@@ -183,19 +183,90 @@ The graph constructs cleanly. Execution requires engine dispatch on the
 new node types (`task`, `subflow`, `approval_gate`, `human_task`,
 `worktree`, `merge_queue`) — that's the next chunk of work.
 
+### MVP shipped (2026-05-18)
+
+A working runtime — `smithers_py.runtime` — that walks TS-shape graphs
+and executes them. Independent from the v1.0.0 tick loop; both engines
+coexist.
+
+```bash
+# 30-second demo
+smithers-ts up examples/hello_smithers_ts/workflow.py \
+    --input '{"name":"luis"}' --db /tmp/demo.db
+# → pauses at the ApprovalGate
+
+smithers-ts approve <runId> --note "lgtm" --by "you" --db /tmp/demo.db
+
+smithers-ts up examples/hello_smithers_ts/workflow.py \
+    --run-id <runId> --resume --db /tmp/demo.db
+# → completes with hello-final-v0 row
+
+smithers-ts inspect <runId> --db /tmp/demo.db
+# → full run state, output rows, terminal payload
+```
+
+The same flow works against the bun-port example:
+
+```bash
+smithers-ts up examples/bun_port_smithers_py/workflow.py \
+    --workflow bun_port_workflow \
+    --input '{"repo":"/tmp/bun","files":[{"zig":"src/http.zig","crate":"http","loc":1200}],"phases":["lifetimes"]}' \
+    --db /tmp/bun.db
+# → pauses at the post-lifetimes ApprovalGate
+
+smithers-ts approve <runId> --db /tmp/bun.db
+smithers-ts up examples/bun_port_smithers_py/workflow.py \
+    --workflow bun_port_workflow --run-id <runId> --resume --db /tmp/bun.db
+# → completes, terminal smithers-bun-port-py-final-v0 row emitted
+```
+
+#### What MVP covers
+
+- `WorkflowNode`, `SequenceNode`, `ParallelNode`, `TaskNode` (render +
+  duck-typed agent), `SubflowNode` (with child run isolation),
+  `ApprovalGateNode` (pause/resume + on_deny fail/continue),
+  `HumanTaskNode` (always pause), `WorktreeNode`, `MergeQueueNode`
+  (structural pass-through).
+- Pydantic schema validation on every output row.
+- SQLite-durable rows in three new tables (`ts_runs`, `ts_output_rows`,
+  `ts_approvals`). Resume reads previous output rows and skips already-
+  done tasks (idempotent).
+- CLI: `smithers-ts up | approve | deny | inspect | ps`.
+- 12 runtime e2e tests + 34 unit tests for nodes/facade. Total suite:
+  **691 passed, 1 skipped, 0 failures**.
+
+#### What MVP doesn't cover (the v0.2+ backlog)
+
+1. **Concurrency.** `ParallelNode` runs children sequentially today.
+   Real concurrent execution within a frame is the next iteration.
+2. **Real-mode agents.** TaskNode dispatches to any object with a
+   `.generate(prompt=...)` method, which is enough for dry-mode and a
+   thin Anthropic SDK wrapper, but we don't ship Claude Code / Codex
+   adapters yet. Drop-in shape will come from the v1.0.0 `executors/`
+   package once we decide on unification.
+3. **Worktree / MergeQueue semantics.** Honored structurally
+   (children run under them) but no real git worktree creation or merge
+   serialization. This is the bigger lift for the bun-port end-to-end.
+4. **Cross-runtime row diff.** The acceptance criterion. Once a real TS
+   run dumps its `output_rows` we diff against a Python run on the same
+   fixture. Some column names differ (we use `ts_output_rows` while TS
+   uses per-schema tables). The shape map is documented but the test
+   harness isn't written yet.
+5. **Full bun-port port.** Only lifetime-classify is fleshed out; the
+   other six phases are placeholder Subflows pointing at lifetime-classify
+   so the parent graph constructs.
+
 ### Next concrete steps
 
-1. **Engine dispatch.** Teach `smithers_py.engine.tick_loop` to recognize
-   the new `node.type` literals and route them through the tick loop.
-   Simplest path: translate them down to existing primitives at render
-   time (`SequenceNode` → ordered child execution like `PhaseNode`,
-   `TaskNode` → `ClaudeNode` when `agent` is set, etc.). More principled
-   path: add per-type handlers alongside the existing phase/step/ralph
-   handlers.
-2. **Wire-compat tests.** Once the engine runs the new shape, dump the
-   `output_rows` table after executing the smoke fixture in both Python
-   and TS, diff column-by-column.
-3. **Fill in phases 2–7** of the bun-port example as each engine
+1. **Cross-runtime row diff harness.** Write a TS workflow + Python
+   workflow that produce identical conceptual rows; compare. This is the
+   single most important test to write next.
+2. **Concurrency for `ParallelNode`.** Thread pool, asyncio, or
+   `concurrent.futures` — pick one, wire it.
+3. **Real Anthropic agent adapter.** Port `executors/claude.py` (already
+   working in v1.0.0) to the duck-typed `.generate()` interface the
+   runtime expects.
+4. **Fill in phases 2–7** of the bun-port example as each engine
    capability is unblocked.
 
 ## License & attribution

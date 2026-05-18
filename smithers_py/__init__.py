@@ -53,6 +53,19 @@ from .facade import (
     createSmithers,
 )
 
+# TS-shape runtime (independent from v1.0.0 tick loop)
+from .runtime import (
+    RunResult,
+    RunStatus,
+    Store,
+    WorkflowError,
+    approve_run,
+    deny_run,
+    inspect_run,
+    list_runs,
+    run_workflow,
+)
+
 # Engine - tick loop and context
 from .engine import (
     TickLoop,

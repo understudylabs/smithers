@@ -26,12 +26,33 @@ identical SQLite row shape.
 | `components/agents.py` | Dry-mode for every agent name (16 total). Real-mode warns and falls back to dry until `smithers_py` engine learns `TaskNode.agent` dispatch. |
 | `components/porting_rules.py` | Stable node ids, field keys, cache keys, sampling, TSV synth |
 
-The graph constructs and validates cleanly today. End-to-end execution
-requires engine work in `smithers_py.engine` to dispatch on the new node
-types (`task`, `subflow`, `approval_gate`, `human_task`) — that's the
-next chunk of the resume effort.
+As of 2026-05-18 the workflow runs end-to-end via `smithers-ts up` using
+the `smithers_py.runtime` runner. Output rows persist to SQLite, the
+post-lifetimes ApprovalGate pauses the run, and `smithers-ts approve`
+resumes it.
 
-## Running (graph construction smoke)
+## Running
+
+```bash
+# First call — runs the lifetimes phase, pauses at the ApprovalGate.
+smithers-ts up examples/bun_port_smithers_py/workflow.py \
+    --workflow bun_port_workflow \
+    --input '{"repo":"/tmp/bun-rust-port","files":[{"zig":"src/http/http.zig","crate":"http","loc":1200}],"phases":["lifetimes"]}' \
+    --db /tmp/bun.db
+
+# Approve the gate.
+smithers-ts approve <runId> --note "ok" --by "you" --db /tmp/bun.db
+
+# Resume — completes the remaining phase placeholders and writes the
+# terminal smithers-bun-port-py-final-v0 row.
+smithers-ts up examples/bun_port_smithers_py/workflow.py \
+    --workflow bun_port_workflow --run-id <runId> --resume --db /tmp/bun.db
+
+# See the full run state.
+smithers-ts inspect <runId> --db /tmp/bun.db
+```
+
+## Graph construction smoke (no runtime)
 
 ```bash
 cd /Users/luis/smithers/smithers_py

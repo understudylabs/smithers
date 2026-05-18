@@ -41,6 +41,7 @@ all = ["smithers-py[jsx,dev]"]
 
 [project.scripts]
 smithers-py = "smithers_py.__main__:main"
+smithers-ts = "smithers_py.runtime.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/evmts/smithers"
@@ -65,6 +66,7 @@ Changelog = "https://github.com/evmts/smithers/blob/main/smithers_py/CHANGELOG.m
 "logs" = "smithers_py/logs"
 "mcp" = "smithers_py/mcp"
 "nodes" = "smithers_py/nodes"
+"runtime" = "smithers_py/runtime"
 "serialize" = "smithers_py/serialize"
 "state" = "smithers_py/state"
 "vcs" = "smithers_py/vcs"

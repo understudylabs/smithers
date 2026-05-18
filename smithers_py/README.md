@@ -9,6 +9,14 @@
 > Intent is to PR the resumed work back to `smithersai/smithers:python`
 > once it's caught up — see [`PORT_RESUME.md`](../PORT_RESUME.md) at the
 > repo root for the plan, scope, and coordination notes.
+>
+> **MVP shipped 2026-05-18.** A working TS-shape runtime
+> (`smithers_py.runtime`) executes `WorkflowNode`/`SequenceNode`/
+> `ParallelNode`/`TaskNode`/`SubflowNode`/`ApprovalGateNode`/
+> `HumanTaskNode` graphs end-to-end via the `smithers-ts` CLI, with
+> pause/resume on approval and SQLite-durable output rows. See
+> [`PORT_RESUME.md`](../PORT_RESUME.md#mvp-shipped-2026-05-18) for the
+> demo commands.
 
 Python orchestration framework for AI agent coordination with React-like semantics.
 
