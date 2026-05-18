@@ -14,6 +14,7 @@ semantics are out of MVP scope.
 from __future__ import annotations
 
 import os
+import time
 import traceback
 import uuid
 from dataclasses import dataclass, field
@@ -83,6 +84,35 @@ class WorkflowError(Exception):
         self.cause = cause
 
 
+class NonRetryableError(Exception):
+    """Signal from a Task that retries should NOT be attempted.
+
+    Mirrors the upstream behavior added in PR #132 ("Honor non-retryable
+    agent failures"). Raise this from inside a ``TaskNode.render`` or
+    ``agent.generate(...)`` to short-circuit the retry loop and fail the
+    task immediately, preserving the original error details.
+
+    Common reasons to raise this rather than a plain ``Exception``:
+
+    - The agent reports an invariant config problem ("AGENT_CONFIG_INVALID"
+      upstream) that retries can't fix.
+    - The task's inputs are structurally wrong (validation failure, missing
+      schema field) — retrying won't help.
+    - A budget / rate-limit response says "do not retry."
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details = details or {}
+
+
 # ----- Walker state -----------------------------------------------------------
 
 
@@ -128,6 +158,7 @@ def run_workflow(
     db_path: str = "smithers.db",
     run_id: Optional[str] = None,
     resume: bool = False,
+    force: bool = False,
     parent_run_id: Optional[str] = None,
 ) -> RunResult:
     """Execute a TS-shape workflow function.
@@ -139,6 +170,13 @@ def run_workflow(
     a paused run, pass the original ``run_id`` and ``resume=True``; the
     runner pulls the original input from the stored run row so callers
     don't have to repass it.
+
+    ``force=True`` resumes a run whose stored status is still
+    ``"running"`` — typically the case after a crash where the process
+    didn't get to update the status to ``"paused"`` or ``"failed"``.
+    Without ``force``, this is refused to prevent two concurrent
+    processes from racing on the same row. Ports upstream PR #87
+    ("resume --force and SIGINT cancellation").
     """
     store = Store(db_path)
     store.connect()
@@ -154,6 +192,12 @@ def run_workflow(
             input = {}
         store.create_run(run_id, workflow_name, input, parent_run_id=parent_run_id)
     else:
+        if existing.status == "running" and not force:
+            raise WorkflowError(
+                f"Run {run_id!r} is already marked 'running'. "
+                "If a prior process crashed mid-flight, pass force=True "
+                "(CLI: --force) to take over."
+            )
         # Resuming: pull stored input unless caller explicitly overrides.
         if input is None:
             input = existing.input
@@ -284,7 +328,7 @@ def _run_task(node: TaskNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
         ctx._output_cache[node.id] = existing.payload
         return _WalkResult()
 
-    payload = _compute_task_payload(node)
+    payload = _compute_with_retry(node, node_id)
     schema = _resolve_schema(node)
     validated = _validate_payload(payload, schema, node_id=node_id)
     schema_version = _extract_schema_version(validated)
@@ -300,6 +344,47 @@ def _run_task(node: TaskNode, ctx: _Ctx, parent_path: str) -> _WalkResult:
     ctx._output_cache[node_id] = validated
     ctx._output_cache[node.id] = validated
     return _WalkResult()
+
+
+def _compute_with_retry(node: TaskNode, node_id: str) -> Dict[str, Any]:
+    """Run ``_compute_task_payload`` with retry policy.
+
+    Honors ``node.max_attempts`` with exponential backoff (0.5s, 1s, 2s, …
+    capped at 30s). ``NonRetryableError`` short-circuits the loop. Schema
+    / validation errors (``WorkflowError``) also bypass retries because
+    they describe deterministic faults, not transient ones.
+
+    The backoff is configurable via ``SMITHERS_TS_RETRY_BACKOFF_BASE`` (env)
+    so tests can pin it to 0 without changing call sites.
+    """
+    base = float(os.environ.get("SMITHERS_TS_RETRY_BACKOFF_BASE", "0.5"))
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, max(1, node.max_attempts) + 1):
+        try:
+            return _compute_task_payload(node)
+        except NonRetryableError as exc:
+            raise WorkflowError(
+                f"Task {node.id!r} failed non-retryably"
+                + (f" [{exc.code}]" if exc.code else "")
+                + f": {exc}",
+                node_id=node_id,
+                cause=exc,
+            ) from exc
+        except WorkflowError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            if attempt < node.max_attempts:
+                delay = min(base * (2 ** (attempt - 1)), 30.0)
+                if delay > 0:
+                    time.sleep(delay)
+                continue
+    assert last_exc is not None
+    raise WorkflowError(
+        f"Task {node.id!r} failed after {node.max_attempts} attempt(s): {last_exc}",
+        node_id=node_id,
+        cause=last_exc,
+    ) from last_exc
 
 
 def _compute_task_payload(node: TaskNode) -> Dict[str, Any]:

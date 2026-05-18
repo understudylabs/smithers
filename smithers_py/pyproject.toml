@@ -67,6 +67,7 @@ Changelog = "https://github.com/evmts/smithers/blob/main/smithers_py/CHANGELOG.m
 "mcp" = "smithers_py/mcp"
 "nodes" = "smithers_py/nodes"
 "runtime" = "smithers_py/runtime"
+"runtime/agents.py" = "smithers_py/runtime/agents.py"
 "serialize" = "smithers_py/serialize"
 "state" = "smithers_py/state"
 "vcs" = "smithers_py/vcs"

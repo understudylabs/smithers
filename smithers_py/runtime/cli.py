@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import signal
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -37,6 +38,7 @@ from .runner import (
     list_runs,
     run_workflow,
 )
+from .store import Store
 
 
 _DEFAULT_DB = "smithers.db"
@@ -139,15 +141,48 @@ def _load_input(raw: Optional[str]) -> Dict[str, Any]:
 def cmd_up(args: argparse.Namespace) -> int:
     module = _load_workflow_module(args.workflow_file)
     workflow_fn = _resolve_workflow(module, args.workflow)
-    input_payload = _load_input(args.input)
-
-    result = run_workflow(
-        workflow_fn,
-        input=input_payload,
-        db_path=args.db,
-        run_id=args.run_id,
-        resume=args.resume,
+    input_payload = _load_input(args.input) if not args.resume else (
+        _load_input(args.input) if args.input is not None else None
     )
+
+    # SIGINT (Ctrl-C) handler — mark the run as cancelled and exit.
+    # We capture the run id below; the signal handler closes over it.
+    _cancel_state: Dict[str, Any] = {"run_id": args.run_id, "db_path": args.db}
+
+    def _on_sigint(signum, frame):  # noqa: ARG001 - signature is fixed
+        run_id = _cancel_state.get("run_id")
+        if run_id:
+            try:
+                store = Store(_cancel_state["db_path"])
+                store.connect()
+                store.update_run_status(run_id, "cancelled")
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                pass
+        print(
+            "\n[smithers-ts] interrupted; run "
+            f"{_cancel_state.get('run_id') or '(no id yet)'} "
+            "marked as cancelled (if it was already started)",
+            file=sys.stderr,
+        )
+        sys.exit(130)
+
+    signal.signal(signal.SIGINT, _on_sigint)
+
+    try:
+        result = run_workflow(
+            workflow_fn,
+            input=input_payload,
+            db_path=args.db,
+            run_id=args.run_id,
+            resume=args.resume,
+            force=args.force,
+        )
+    except WorkflowError as exc:
+        print(f"smithers-ts: {exc}", file=sys.stderr)
+        return 2
+
+    # Reset signal handler so post-run printing isn't interrupted weirdly.
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     print(json.dumps(_summarize(result), indent=2, default=str))
     if result.status == RunStatus.PAUSED:
@@ -274,6 +309,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--resume",
         action="store_true",
         help="Resume an existing run by its run-id",
+    )
+    up.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Take over a run that is still marked 'running' "
+            "(e.g., after a crash). Without this, refusing to resume "
+            "an in-flight run is the safety default."
+        ),
     )
     up.set_defaults(func=cmd_up)
 

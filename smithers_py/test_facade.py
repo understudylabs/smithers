@@ -99,6 +99,20 @@ def test_input_output_props_none_when_missing() -> None:
     assert cfg.output_schema is None
 
 
+def test_duplicate_schema_yields_unique_refs() -> None:
+    """Port of upstream PR #130 (duplicate output refs).
+
+    Two output keys can share the same Pydantic schema. Each gets a
+    distinct OutputRef so Task bindings stay unambiguous.
+    """
+    cfg = create_smithers(schemas={"a": _Score, "b": _Score})
+    assert cfg.outputs.a is not cfg.outputs.b
+    assert cfg.outputs.a.name == "a"
+    assert cfg.outputs.b.name == "b"
+    # But the underlying schema class is the same.
+    assert cfg.outputs.a.schema_ is cfg.outputs.b.schema_
+
+
 def test_options_pass_through() -> None:
     cfg = create_smithers(
         schemas={"output": _Output},

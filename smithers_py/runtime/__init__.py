@@ -19,7 +19,9 @@ the v1.0.0 engine continues to handle ``PhaseNode``/``StepNode``/``Ralph``/
                               run_id=result.run_id, resume=True)
 """
 
+from .agents import AgentLike, AgentResult, AsyncAgentLike, DryAgent
 from .runner import (
+    NonRetryableError,
     RunResult,
     RunStatus,
     WorkflowError,
@@ -32,6 +34,11 @@ from .runner import (
 from .store import Store
 
 __all__ = [
+    "AgentLike",
+    "AgentResult",
+    "AsyncAgentLike",
+    "DryAgent",
+    "NonRetryableError",
     "RunResult",
     "RunStatus",
     "WorkflowError",

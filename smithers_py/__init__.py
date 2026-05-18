@@ -55,6 +55,11 @@ from .facade import (
 
 # TS-shape runtime (independent from v1.0.0 tick loop)
 from .runtime import (
+    AgentLike,
+    AgentResult,
+    AsyncAgentLike,
+    DryAgent,
+    NonRetryableError,
     RunResult,
     RunStatus,
     Store,

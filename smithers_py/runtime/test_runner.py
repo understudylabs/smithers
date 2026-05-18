@@ -34,7 +34,7 @@ from smithers_py import (
     list_runs,
     run_workflow,
 )
-from smithers_py.runtime.runner import WorkflowError
+from smithers_py.runtime.runner import NonRetryableError, WorkflowError
 
 
 # ----- Fixtures ---------------------------------------------------------------
@@ -489,6 +489,209 @@ class TestInspect:
     def test_inspect_unknown_run_raises(self, db_path: str) -> None:
         with pytest.raises(WorkflowError):
             inspect_run("nonexistent-run", db_path=db_path)
+
+
+class TestForceResume:
+    """Ports of upstream PR #87 (resume --force)."""
+
+    def test_resume_running_without_force_refused(self, db_path: str) -> None:
+        config = _build_basic_config()
+        outputs = config.outputs
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="x",
+                children=[
+                    TaskNode(
+                        id="t",
+                        output=outputs.output,
+                        render=lambda: {
+                            "workload": ctx.input.workload,
+                            "total": 0,
+                            "steps": [],
+                        },
+                    )
+                ],
+            )
+
+        # Seed a run row with status='running' (simulating a crash mid-run).
+        store = Store(db_path)
+        store.connect()
+        store.create_run("crashed-run", "wf", {"workload": "x"})
+        # store.create_run leaves status='running' by default — that's the case.
+
+        with pytest.raises(WorkflowError, match="already marked 'running'"):
+            run_workflow(
+                wf,
+                input={"workload": "x"},
+                db_path=db_path,
+                run_id="crashed-run",
+                resume=True,
+                force=False,
+            )
+
+    def test_resume_running_with_force_succeeds(self, db_path: str) -> None:
+        config = _build_basic_config()
+        outputs = config.outputs
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="x",
+                children=[
+                    TaskNode(
+                        id="t",
+                        output=outputs.output,
+                        render=lambda: {
+                            "workload": ctx.input.workload,
+                            "total": 1,
+                            "steps": ["t"],
+                        },
+                    )
+                ],
+            )
+
+        store = Store(db_path)
+        store.connect()
+        store.create_run("crashed-run", "wf", {"workload": "x"})
+
+        r = run_workflow(
+            wf,
+            input={"workload": "x"},
+            db_path=db_path,
+            run_id="crashed-run",
+            resume=True,
+            force=True,
+        )
+        assert r.status == RunStatus.COMPLETED
+
+
+class TestRetryPolicy:
+    """Ports of upstream PR #132 (Honor non-retryable agent failures)."""
+
+    def test_retries_until_success(self, db_path: str, monkeypatch) -> None:
+        # Zero backoff so the test stays fast.
+        monkeypatch.setenv("SMITHERS_TS_RETRY_BACKOFF_BASE", "0")
+        config = create_smithers(schemas={"input": _Input, "output": _StepOut})
+        attempts = {"n": 0}
+
+        def flaky():
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise RuntimeError(f"transient {attempts['n']}")
+            return {"step": "ok", "value": attempts["n"]}
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="retry",
+                children=[
+                    TaskNode(
+                        id="t",
+                        output=config.outputs.output,
+                        render=flaky,
+                        maxAttempts=5,
+                    )
+                ],
+            )
+
+        r = run_workflow(wf, input={"workload": "x"}, db_path=db_path)
+        assert r.status == RunStatus.COMPLETED
+        assert attempts["n"] == 3
+        assert r.output is not None
+        assert r.output["value"] == 3
+
+    def test_fails_after_max_attempts(self, db_path: str, monkeypatch) -> None:
+        monkeypatch.setenv("SMITHERS_TS_RETRY_BACKOFF_BASE", "0")
+        config = create_smithers(schemas={"input": _Input, "output": _StepOut})
+        attempts = {"n": 0}
+
+        def always_fails():
+            attempts["n"] += 1
+            raise RuntimeError("nope")
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="retry",
+                children=[
+                    TaskNode(
+                        id="t",
+                        output=config.outputs.output,
+                        render=always_fails,
+                        maxAttempts=3,
+                    )
+                ],
+            )
+
+        r = run_workflow(wf, input={"workload": "x"}, db_path=db_path)
+        assert r.status == RunStatus.FAILED
+        assert attempts["n"] == 3
+        assert "after 3 attempt" in (r.error or {}).get("message", "")
+
+    def test_non_retryable_short_circuits(self, db_path: str, monkeypatch) -> None:
+        monkeypatch.setenv("SMITHERS_TS_RETRY_BACKOFF_BASE", "0")
+        config = create_smithers(schemas={"input": _Input, "output": _StepOut})
+        attempts = {"n": 0}
+
+        def hard_fail():
+            attempts["n"] += 1
+            raise NonRetryableError(
+                "config invalid",
+                code="AGENT_CONFIG_INVALID",
+                details={"field": "model"},
+            )
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="retry",
+                children=[
+                    TaskNode(
+                        id="t",
+                        output=config.outputs.output,
+                        render=hard_fail,
+                        maxAttempts=10,  # would retry 10 times if retryable
+                    )
+                ],
+            )
+
+        r = run_workflow(wf, input={"workload": "x"}, db_path=db_path)
+        assert r.status == RunStatus.FAILED
+        assert attempts["n"] == 1  # short-circuited, no retries
+        msg = (r.error or {}).get("message", "")
+        assert "non-retryably" in msg
+        assert "AGENT_CONFIG_INVALID" in msg
+
+    def test_validation_errors_skip_retry(self, db_path: str, monkeypatch) -> None:
+        # Output schema validation failures are deterministic — retrying
+        # wouldn't help — so they should also short-circuit retries.
+        monkeypatch.setenv("SMITHERS_TS_RETRY_BACKOFF_BASE", "0")
+        config = create_smithers(schemas={"input": _Input, "output": _StepOut})
+        attempts = {"n": 0}
+
+        def emit_wrong_shape():
+            attempts["n"] += 1
+            return {"not": "matching schema"}
+
+        @config.workflow
+        def wf(ctx):
+            return WorkflowNode(
+                name="retry",
+                children=[
+                    TaskNode(
+                        id="t",
+                        output=config.outputs.output,
+                        render=emit_wrong_shape,
+                        maxAttempts=5,
+                    )
+                ],
+            )
+
+        r = run_workflow(wf, input={"workload": "x"}, db_path=db_path)
+        assert r.status == RunStatus.FAILED
+        assert attempts["n"] == 1
 
 
 class TestAgentTask:
