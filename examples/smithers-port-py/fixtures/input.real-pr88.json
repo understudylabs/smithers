@@ -1,0 +1,16 @@
+{
+  "upstreamRepo": "smithersai/smithers",
+  "upstreamBranch": "main",
+  "forkRepo": "understudylabs/smithers",
+  "forkBranch": "port/resume",
+  "sinceIso": "2026-01-01",
+  "prsToProcess": [88],
+  "maxConcurrency": 1,
+  "thresholds": {
+    "reviewerRejectionMax": 30,
+    "classifierConfidenceMin": 50,
+    "parityDiffMax": 0
+  },
+  "emitPullRequests": false,
+  "requireOperatorPlan": false
+}

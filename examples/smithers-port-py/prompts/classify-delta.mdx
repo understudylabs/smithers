@@ -11,6 +11,19 @@ PR_URL: {props.prUrl}
 FILES_CHANGED: {props.filesChanged.join(", ")}
 LABELS: {props.labels.join(", ")}
 
+### Python target tree (existing files in the port)
+
+When the action is `port` or `port-with-replacement`, populate
+`pythonTarget` with the most plausible existing file from this list —
+not a new scratch path. Pick by matching the upstream TS file's
+responsibility to its Python counterpart. If no good match exists,
+suggest a new path that fits the layout (e.g.,
+`smithers_py/runtime/<feature>.py`).
+
+Python tree (top {props.pythonTree.length} files):
+
+{props.pythonTree.join("\n")}
+
 ### Decision categories (`action`)
 
 - `port` — straightforward Python port (matching idiom)

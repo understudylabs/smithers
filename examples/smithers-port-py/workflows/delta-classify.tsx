@@ -8,6 +8,7 @@ import {
   staticClassification,
   stableNodeId,
 } from "../components/sync-rules.ts";
+import { listPythonSourceTree } from "../components/upstream-watch.ts";
 import {
   classificationSummarySchema,
   deltaClassificationSchema,
@@ -34,6 +35,12 @@ const { Workflow, Task, Sequence, Parallel, smithers, outputs } = createSmithers
 
 export default smithers((ctx) => {
   const agents = agentsFor({ forkRepoPath: ctx.input.forkRepoPath });
+  // List the existing Python tree so the classifier can suggest a
+  // real target file path instead of a per-PR scratch file.
+  const pythonTree = listPythonSourceTree({
+    forkRepoPath: ctx.input.forkRepoPath,
+    maxFiles: 200,
+  });
 
   // Short-circuit obvious cases with deterministic rules.
   const llmPrs: any[] = [];
@@ -92,6 +99,7 @@ export default smithers((ctx) => {
                   prUrl={pr.htmlUrl}
                   filesChanged={pr.filesChanged}
                   labels={pr.labels}
+                  pythonTree={pythonTree}
                   schema={deltaClassificationSchema}
                 />
               </Task>

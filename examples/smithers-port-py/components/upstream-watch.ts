@@ -16,6 +16,29 @@ export type UpstreamPr = {
 };
 
 
+export function listPythonSourceTree(args: {
+  forkRepoPath: string;
+  rootRelativePath?: string;
+  maxFiles?: number;
+}): string[] {
+  const root = args.rootRelativePath ?? "smithers_py";
+  const max = args.maxFiles ?? 200;
+  const abs = root.startsWith("/") ? root : `${args.forkRepoPath}/${root}`;
+  try {
+    const raw = execSync(
+      `find ${JSON.stringify(abs)} -type f -name '*.py' -not -path '*/.venv/*' -not -path '*/__pycache__/*' -not -path '*/site-packages/*' 2>/dev/null | head -${max}`,
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 1024 * 1024 },
+    );
+    return raw.split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((p) => (p.startsWith(args.forkRepoPath) ? p.slice(args.forkRepoPath.length + 1) : p));
+  } catch {
+    return [];
+  }
+}
+
+
 export function readTargetFile(args: {
   forkRepoPath: string;
   relativePath: string;
