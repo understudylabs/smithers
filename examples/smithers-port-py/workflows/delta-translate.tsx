@@ -3,7 +3,7 @@ import { createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
 
 import { agentsFor } from "../components/agents.ts";
-import { estimateCostMicrocents, stableNodeId } from "../components/sync-rules.ts";
+import { estimateCostMicrocents, readActualTokenUsage, stableNodeId } from "../components/sync-rules.ts";
 import { fetchPrDiff } from "../components/upstream-watch.ts";
 import {
   classificationSummarySchema,
@@ -93,8 +93,13 @@ export default smithers((ctx) => {
               const drafted = rows.filter((r) => r.status === "drafted").length;
               const failed = rows.filter((r) => r.status === "failed").length;
               const skipped = rows.filter((r) => r.status === "skipped").length;
-              const totalIn = rows.reduce((s, r) => s + (r.tokensUsed ?? 0) / 2, 0);
-              const totalOut = rows.reduce((s, r) => s + (r.tokensUsed ?? 0) / 2, 0);
+              // Real token usage from engine-recorded events — strictly
+              // more accurate than the model's self-reported tokensUsed.
+              const actual = readActualTokenUsage({
+                dbPath: process.env.SMITHERS_PORT_SYNC_DB ?? "smithers.db",
+                runIdPrefix: ctx.runId,
+                nodeIdPrefix: "translate:",
+              });
               return {
                 schema_version: "smithers-port-sync-translate-summary-v0" as const,
                 rows,
@@ -102,11 +107,11 @@ export default smithers((ctx) => {
                   drafted,
                   failed,
                   skipped,
-                  totalTokensIn: Math.round(totalIn),
-                  totalTokensOut: Math.round(totalOut),
+                  totalTokensIn: actual.tokensIn,
+                  totalTokensOut: actual.tokensOut,
                   estimatedCostUsdMicrocents: estimateCostMicrocents({
-                    tokensIn: Math.round(totalIn),
-                    tokensOut: Math.round(totalOut),
+                    tokensIn: actual.tokensIn,
+                    tokensOut: actual.tokensOut,
                   }),
                 },
               };

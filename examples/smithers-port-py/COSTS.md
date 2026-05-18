@@ -94,3 +94,82 @@ Projected real-mode equivalent: **~$0.84** for the same 6-PR fixture
 - One week's normal upstream activity: **~$0.14**.
 - A month of normal upstream activity: **~$0.60**.
 - The full 18-PR catch-up we already did manually this morning would have cost **~$2.52** real-mode and ~30 minutes wall-clock.
+
+## Live real-mode numbers (2026-05-18)
+
+Ran the 1-PR fixture (PR #130) against the live Anthropic API six
+times today shaking out the override-mode metadata bug, the
+prompt-threading bug, the MDX-fenced-code-block interpolation bug,
+and a 10x rate-table error in `estimateCostMicrocents`. Final v6
+numbers, using engine-recorded `TokenUsageReported` events (real
+API counts, not the model's self-report):
+
+| Metric | v6 (final) |
+| --- | --- |
+| Wall-clock | ~20s |
+| Classify input tokens | 1,193 |
+| Classify output tokens | 228 |
+| Translate input tokens | 12,316 |
+| Translate output tokens | 192 |
+| Total tokens | 13,929 |
+| `estimatedSpendMicrocents` | **46,827** |
+| **Per-PR USD** | **$0.047** |
+
+**Projection vs reality.** The per-PR model in
+[Per-PR cost breakdown](#per-pr-cost-breakdown) assumed $0.14/PR
+average. Real cost is **$0.047/PR** — ~3x cheaper than projected.
+Three reasons:
+- The translate response is short (model returns a concise JSON
+  with reasoning, not a full file). 192 output tokens vs the 2,000
+  in the model.
+- No reviewer pass fired (skip path → no need to verify).
+- No retry (the classifier got a clean structured-output response
+  on attempt 1).
+
+**Steady-state recalibration (real numbers):**
+
+| Frequency assumption | Weekly | Monthly | Annual |
+| --- | --- | --- | --- |
+| Expected (1 PR/wk avg) | $0.05 | $0.20 | $2.40 |
+| High activity (3 PR/wk) | $0.15 | $0.65 | $7.80 |
+| Catch-up (60 PRs at once) | — | $2.82 | — |
+
+**Layered-judgment observation.** PR #130's run produced the exact
+safety property the workflow was designed for:
+
+1. Classifier (title + files) said `port`, 85% confidence, citing
+   bugs mentioned in the PR title.
+2. Translator (full diff in prompt) read the actual changes and
+   overruled the classifier: status `skipped`, notes captured the
+   substantive reason ("TS-only packaging, tsup config, bun.lock —
+   no Python equivalents").
+3. Parity check (live wire_compat re-run) stayed green throughout.
+
+That layered judgment — classifier proposes, translator with the
+full diff disposes — is exactly the safety property a recursive
+maintenance workflow needs, and it costs ~$0.05.
+
+## Cost tracking implementation note
+
+`estimatedSpendMicrocents` in the final output is computed from
+engine-recorded `TokenUsageReported` events in the
+`_smithers_events` table, not from the model's self-reported
+`tokensUsed` field. The model's number is a guess; the events come
+from the AI SDK's `result.usage.inputTokens` / `outputTokens` which
+the Anthropic SDK populates from the API response. To get the same
+numbers in a shell:
+
+```sql
+SELECT
+  json_extract(payload_json, '$.nodeId')        AS node,
+  json_extract(payload_json, '$.inputTokens')   AS in_tok,
+  json_extract(payload_json, '$.outputTokens')  AS out_tok
+FROM _smithers_events
+WHERE run_id LIKE 'YOUR_RUN_ID%'
+  AND type = 'TokenUsageReported';
+```
+
+The rates baked into `estimateCostMicrocents` are claude-sonnet-4-5
+list pricing as of 2026-05: $3/MTok in, $15/MTok out. Update them
+when the model changes or when the SDK starts reporting cache-read
+discounts.

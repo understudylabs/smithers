@@ -17,6 +17,7 @@ import {
   translationSummarySchema,
   upstreamWatchResultSchema,
 } from "./components/schemas.ts";
+import { estimateCostMicrocents, readActualTokenUsage } from "./components/sync-rules.ts";
 import OperatorPlanPrompt from "./prompts/operator-plan.mdx";
 import classifyWorkflow from "./workflows/delta-classify.tsx";
 import translateWorkflow from "./workflows/delta-translate.tsx";
@@ -217,7 +218,20 @@ export default smithers((ctx) => {
                 (classify?.metrics.skipForeverCount ?? 0) +
                 (classify?.metrics.alreadyPortedCount ?? 0) +
                 failed;
-              const cost = translate?.metrics.estimatedCostUsdMicrocents ?? 0;
+              // Roll up real classifier + translator cost. Both phases
+              // record TokenUsageReported events; we sum classifier
+              // costs here and add translate's already-rolled-up cost.
+              const classifyUsage = readActualTokenUsage({
+                dbPath: process.env.SMITHERS_PORT_SYNC_DB ?? "smithers.db",
+                runIdPrefix: ctx.runId,
+                nodeIdPrefix: "classify:",
+              });
+              const classifyCost = estimateCostMicrocents({
+                tokensIn: classifyUsage.tokensIn,
+                tokensOut: classifyUsage.tokensOut,
+              });
+              const translateCost = translate?.metrics.estimatedCostUsdMicrocents ?? 0;
+              const cost = classifyCost + translateCost;
               return {
                 schema_version: "smithers-port-sync-final-v0" as const,
                 status: parity?.passed === false
