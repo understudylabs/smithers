@@ -5,13 +5,24 @@
 // deterministic outputs based on prompt tags so the workflow shape can
 // be validated end-to-end with zero LLM budget.
 
-import { ClaudeCodeAgent, PiAgent } from "smithers-orchestrator";
+import { AnthropicAgent, ClaudeCodeAgent, PiAgent } from "smithers-orchestrator";
 
 type AgentArgs = { prompt?: string; outputSchema?: unknown };
 type AgentResult = { text: string; output: Record<string, unknown> };
 type LocalAgent = { id: string; generate(args?: AgentArgs): Promise<AgentResult> };
 
 const useRealAgents = process.env.SMITHERS_PORT_PY_REAL_AGENTS === "1";
+
+// Two real-mode flavors:
+//   SMITHERS_PORT_PY_AGENT_MODE=anthropic  →  AnthropicAgent (AI SDK).
+//     Text-only generation; no filesystem tools. Generated diffs are
+//     captured in the run's row but NOT auto-applied. Safe to spend.
+//   SMITHERS_PORT_PY_AGENT_MODE=cli  →  ClaudeCodeAgent + PiAgent.
+//     CLI agents that read/write files. Requires `claude` and `pi`
+//     binaries on PATH; can mutate the working tree.
+//
+// Default: "anthropic" (text-only, the safe choice for first run).
+const realAgentMode = process.env.SMITHERS_PORT_PY_AGENT_MODE ?? "anthropic";
 
 
 function readTag(prompt: string, name: string, fallback = ""): string {
@@ -117,6 +128,16 @@ function makeDryAgent(kind: string): LocalAgent {
 
 function realWriterAgent(repo: string, kind: string): any {
   if (!useRealAgents) return makeDryAgent(kind);
+
+  if (realAgentMode === "anthropic") {
+    // AI-SDK-based Anthropic agent. Text generation only, no
+    // filesystem tools. The translate phase captures the model's
+    // output text in the diffPreview field; no files are mutated.
+    return new AnthropicAgent({
+      model: process.env.SMITHERS_PORT_PY_WRITER_MODEL ?? "claude-sonnet-4-5",
+    });
+  }
+
   return new ClaudeCodeAgent({
     cwd: repo,
     model: process.env.SMITHERS_PORT_PY_WRITER_MODEL ?? "claude-sonnet-4-5",
@@ -137,6 +158,15 @@ function realWriterAgent(repo: string, kind: string): any {
 
 function realReviewerAgent(repo: string, kind: string): any {
   if (!useRealAgents) return makeDryAgent(kind);
+
+  if (realAgentMode === "anthropic") {
+    // Same agent class as writer (no Pi CLI installed). Anthropic
+    // serves both roles in the safe default mode.
+    return new AnthropicAgent({
+      model: process.env.SMITHERS_PORT_PY_REVIEW_MODEL ?? "claude-sonnet-4-5",
+    });
+  }
+
   return new PiAgent({
     cwd: repo,
     provider: process.env.SMITHERS_PORT_PY_REVIEW_PROVIDER ?? "openai-codex",
