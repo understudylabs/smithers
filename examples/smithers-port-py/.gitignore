@@ -7,3 +7,8 @@ node_modules/
 .smithers/
 events/
 bun.lockb
+
+# Secrets — never commit. bun auto-loads .env.local from cwd at workflow start.
+.env
+.env.*
+!.env.example
