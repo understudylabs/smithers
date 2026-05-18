@@ -70,6 +70,35 @@ This is **alpha-quality work in progress** and not ready for production
 use. The original `v1.0.0` self-described as "Alpha - not ready for
 production use," and that remains accurate for the resumed port too.
 
+### Baseline health check (2026-05-18)
+
+The upstream `python` branch is **not bit-rotted**. As of the resume
+notice landing:
+
+- `uv sync` from `smithers_py/pyproject.toml` resolves cleanly on Python
+  3.12. No vendoring tricks, no overrides.
+- `import smithers_py` succeeds at module import. 30+ public symbols are
+  visible from the package root.
+- `pytest --ignore=e2e` runs **645 tests passed, 1 skipped, 0 failures**
+  in ~9s on a 2025-vintage Mac. No environment-specific fixtures are
+  required to reach green.
+
+So the catch-up effort is **API delta against current TS `main`**, not
+"un-rot a stale port." This is the cheapest version of the work. The
+gating questions are:
+
+1. Which public TS API surfaces shipped after 2026-01-23 (the `python`
+   branch's last touch) and which of them have user-visible Python
+   analogues that need to land?
+2. Does the SQLite row shape still match current TS Smithers? (Wire-
+   compatibility is the bar for cross-runtime resume.)
+3. Are there design deltas (not just additions) on `main` that the
+   `python` branch should follow, or did `smithers_py` v1.0.0 lock in a
+   shape that should stay frozen?
+
+We won't try to answer (1)–(3) without upstream's input first. Outreach
+is in flight.
+
 ## License & attribution
 
 Smithers is MIT-licensed. All resume work in this fork is MIT-licensed and
