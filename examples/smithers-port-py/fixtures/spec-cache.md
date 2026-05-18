@@ -1,4 +1,4 @@
-# `smithers_py.cache` — task output caching with explicit invalidation
+# `smithers_py_meta.cache` — task output caching with explicit invalidation
 
 Per-Task cache key = user-supplied `by(ctx)` + `version` + schema
 signature. Schema changes auto-invalidate stale entries. Mirrors
@@ -7,7 +7,7 @@ upstream Smithers' cache surface (/llms-core.txt#caching).
 ## Public surface
 
 ```python
-from smithers_py.cache import (
+from smithers_py_meta.cache import (
     Cache,
     CacheHit,
     CachePolicy,
