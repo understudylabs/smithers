@@ -90,16 +90,23 @@ export class FireworksJsonAgent {
   private apiKey: string;
   private baseURL: string;
 
+  private maxTokens: number;
+  private temperature: number;
+
   constructor(opts: {
     model: string;
     apiKey: string;
     baseURL: string;
     id?: string;
+    maxTokens?: number;
+    temperature?: number;
   }) {
     this.model = opts.model;
     this.apiKey = opts.apiKey;
     this.baseURL = opts.baseURL.replace(/\/+$/, "");
     this.id = opts.id ?? `fireworks:${opts.model.split("/").pop()}`;
+    this.maxTokens = opts.maxTokens ?? 8192;
+    this.temperature = opts.temperature ?? 0.2;
   }
 
   async generate(args: GenerateArgs = {}): Promise<GenerateResult> {
@@ -124,10 +131,8 @@ export class FireworksJsonAgent {
     const body: any = {
       model: this.model,
       messages: augmented,
-      // Cap to keep cost predictable on retries. The translate response
-      // is the largest expected output; 8k tokens of JSON is plenty.
-      max_tokens: 8192,
-      temperature: 0.2,
+      max_tokens: this.maxTokens,
+      temperature: this.temperature,
       response_format: { type: "json_object" },
     };
 

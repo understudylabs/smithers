@@ -67,7 +67,12 @@ function readStats(spec: Spec): Stats {
       .query("SELECT status, diff_preview, py_loc, notes FROM translation WHERE run_id LIKE ?1 || '%' LIMIT 1")
       .get(spec.runIdPrefix) as any;
     const final = db
-      .query("SELECT estimated_spend_microcents FROM output WHERE run_id = ?1")
+      .query(
+        "SELECT estimated_spend_microcents FROM output " +
+          "WHERE estimated_spend_microcents IS NOT NULL " +
+          "AND (run_id = ?1 OR run_id LIKE ?1 || ':%') " +
+          "ORDER BY length(run_id) ASC LIMIT 1",
+      )
       .get(spec.runIdPrefix) as any;
 
     const diff = translate?.diff_preview ?? "";

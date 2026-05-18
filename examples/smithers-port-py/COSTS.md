@@ -173,3 +173,69 @@ The rates baked into `estimateCostMicrocents` are claude-sonnet-4-5
 list pricing as of 2026-05: $3/MTok in, $15/MTok out. Update them
 when the model changes or when the SDK starts reporting cache-read
 discounts.
+
+## Multi-model live comparison — PR #88 (2026-05-18)
+
+The same PR (`feat: add idle timeout for CLI agents`) fed through
+four models in parallel via the meta-workflow. All four runs hit
+real API endpoints (Anthropic for Sonnet, Fireworks for the open
+weights). Token counts come from `TokenUsageReported` events.
+
+| Model            | classify in/out | translate in/out | **Total $** | Multiple vs Sonnet | Output |
+| ---              | ---             | ---              | ---         | ---                | ---    |
+| **Sonnet 4-5**   | 2,455 / 159     | 10,952 / 2,892   | **$0.0860** | 1.0x (baseline)    | Unified diff, 489 lines, all 4 agent subclasses |
+| **Kimi K2.6**    | 1,962 / 156     |  8,864 / 2,395   | **$0.0129** | **6.7x cheaper**   | Unified diff, ~equivalent length, base class only |
+| **DeepSeek V4 Pro** | 2,400 / 920  |  8,065 / 7,406   | **$0.0177** | 4.9x cheaper       | Unified diff, but **wrong target file** |
+| **GLM 5.1**      | 1,962 / 607     |  8,924 / 8,192   | **$0.0075** | 11.5x cheaper      | Prose summary, **not a diff** (reasoning ate the budget) |
+
+**Headline**: Kimi K2.6 is the early winner. Real unified diff,
+correctly targets `subprocess_agents.py`, picks the right Python
+idioms (`subprocess.Popen` + `select.select()` polling). The diff
+is ~equivalent length to Sonnet's. Only deficit: it ports the base
+class but doesn't propagate the new param to all subclasses (Sonnet
+does this; Sonnet's larger output reflects the breadth, not depth).
+
+**DeepSeek V4 Pro** writes a coherent diff but its **classifier
+picked the wrong file** (chose `runtime/agents.py` over
+`runtime/subprocess_agents.py`). That's a classifier-quality problem
+not a translator-quality problem — likely fixable with the same
+python-tree-listing trick that Sonnet handled cleanly.
+
+**GLM 5.1** is a reasoning model. Even with `max_tokens=24576`, it
+burned the entire output budget on a chain-of-thought preamble and
+emitted only a prose summary in the diffPreview field. Not viable
+for translator role without a non-reasoning variant or a much higher
+budget.
+
+**Cost reset for product unit economics** (using Kimi K2.6):
+
+| Frequency assumption | Weekly | Monthly | Annual |
+| --- | --- | --- | --- |
+| 1 PR/wk per repo, 1 repo | $0.013 | $0.052 | $0.62 |
+| 1 PR/wk per repo, 100 repos | $1.30 | $5.50 | $66 |
+| 1 PR/wk per repo, 1000 repos | $13.00 | $55.00 | $660 |
+
+At $1/repo/month SaaS pricing × 1000 repos = $1000/month MRR. Cost
+basis at Kimi-K2.6 rates: ~$5.50/month. **Gross margin: 99.4%.**
+
+## Shell-env gotcha (operational)
+
+`bun` auto-loads `.env.local` BUT a parent-shell `ANTHROPIC_API_KEY`
+or `ANTHROPIC_BASE_URL` (e.g., set in `~/.zshrc`) takes precedence.
+We hit this twice today:
+1. Empty `ANTHROPIC_API_KEY` from the shell shadowed our `.env.local`
+   value, causing 401s.
+2. `ANTHROPIC_BASE_URL=https://api.anthropic.com` (without `/v1`)
+   from the shell shadowed the AI SDK's default, causing 404s on
+   `/messages`.
+
+For repeatable runs use `env -i`:
+```bash
+env -i PATH="$PATH" HOME="$HOME" \
+  SMITHERS_PORT_PY_REAL_AGENTS=1 \
+  SMITHERS_PORT_PY_AGENT_MODE=anthropic \
+  SMITHERS_PORT_SYNC_DB=smithers.db \
+  bun ./node_modules/.bin/smithers up workflow.tsx --run-id ... --input ...
+```
+
+This strips parent env entirely; bun then loads `.env.local` cleanly.

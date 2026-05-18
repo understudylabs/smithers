@@ -159,11 +159,16 @@ function fireworksAgent(modelKey: string): FireworksJsonAgent {
     );
   }
   const baseURL = process.env.FIREWORKS_BASE_URL ?? "https://api.fireworks.ai/inference/v1";
+  // Reasoning-prefix models (GLM 5.1, DeepSeek V4) burn output tokens on
+  // chain-of-thought before emitting the actual JSON. Give them a larger
+  // budget; Kimi K2.6 doesn't need it but the overage is unbilled.
+  const maxTokens = Number(process.env.SMITHERS_PORT_PY_FIREWORKS_MAX_TOKENS ?? "") || 16384;
   return new FireworksJsonAgent({
     model: spec.id,
     apiKey,
     baseURL,
     id: `fireworks:${modelKey}`,
+    maxTokens,
   });
 }
 
