@@ -177,6 +177,24 @@ from .executors import (
     ErrorClass,
 )
 
+# Memory subsystem (cross-run state)
+from .memory import (
+    EmbeddingAdapter,
+    MemoryFact,
+    MemoryMessage,
+    MemoryNamespace,
+    MemoryNamespaceKind,
+    MemoryStore,
+    MemoryThread,
+    MessageRole,
+    NullEmbeddingAdapter,
+    OpenAIEmbeddingAdapter,
+    Summarizer,
+    SummarizeFn,
+    TokenLimiter,
+    TtlGarbageCollector,
+)
+
 __all__ = [
     # Database
     'SmithersDB',
@@ -274,6 +292,21 @@ __all__ = [
     'RateLimitCoordinator',
     'ErrorClassifier',
     'ErrorClass',
+    # Memory
+    'EmbeddingAdapter',
+    'MemoryFact',
+    'MemoryMessage',
+    'MemoryNamespace',
+    'MemoryNamespaceKind',
+    'MemoryStore',
+    'MemoryThread',
+    'MessageRole',
+    'NullEmbeddingAdapter',
+    'OpenAIEmbeddingAdapter',
+    'Summarizer',
+    'SummarizeFn',
+    'TokenLimiter',
+    'TtlGarbageCollector',
 ]
 
 __version__ = '1.0.0'

@@ -99,8 +99,12 @@ Memory + HTTP server + Scorers + Tool sandbox + Caching. After this,
 Understudy can run unattended against a real repo, gate auto-PRs on
 quality, and remember context across syncs.
 
-- [ ] `smithers_py.memory` (working / messages / semantic recall + 4
-      namespaces + TTL/TokenLimiter/Summarizer processors)
+- [x] `smithers_py.memory` ✅ landed 2026-05-18. Working/messages/semantic
+      recall with 4 namespaces (workflow/agent/user/global), pluggable
+      embedding adapter (OpenAI `text-embedding-3-small` default,
+      `NullEmbeddingAdapter` for tests), TTL/TokenLimiter/Summarizer
+      processors. `ts_memory_facts` and `ts_memory_messages` SQLite
+      tables. 18 tests pass; all 724 existing tests still green.
 - [ ] `smithers_py.serve` (REST + SSE, mirrors the upstream
       `startServer` surface; auth via bearer token)
 - [ ] `smithers_py.scorers` (schemaAdherence, latency, relevancy,
@@ -110,6 +114,8 @@ quality, and remember context across syncs.
       side-effect tracking + idempotency keys)
 - [ ] Task-level `cache.by` + version + schema-signature in
       `runtime/runner.py` and persisted to `_smithers_cache`
+- [ ] Wire `memory={recall, remember, threadId}` into `TaskNode` so
+      agents auto-recall + auto-persist (separate small task #71)
 
 **Phase 2: differentiating capabilities (1.5 weeks)**
 
