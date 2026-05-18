@@ -1,0 +1,77 @@
+## Port a subsystem file to idiomatic Python
+
+You are producing **one Python file** from a subsystem spec. Reply with JSON
+matching the schema; no surrounding prose.
+
+SUBSYSTEM: {props.subsystemName}
+TARGET_PATH: {props.path}
+ROLE: {props.role}
+HINTS: {props.hints}
+
+### Idiom rules
+
+The target codebase is `smithers_py`, the Python port of Smithers. Follow
+these conventions strictly:
+
+- **Pydantic v2** for data models (`BaseModel`, `model_validate`, `Field`).
+  Never `dataclass` for things that need validation, but `@dataclass` is
+  fine for plain value types.
+- **asyncio** for concurrency (`async def`, `await`, `asyncio.gather`).
+  Never `Effect-ts` patterns.
+- **stdlib `sqlite3`** for SQLite access, with WAL mode. Use `aiosqlite`
+  only when the existing module is already async-DB. Patterns to match
+  what's already in `smithers_py.runtime.store`, `smithers_py.memory.store`.
+- **FastAPI** for HTTP servers. **httpx** for HTTP clients.
+- **Pure stdlib for math** — no numpy/scipy. (Cosine similarity etc. with
+  manual loops.)
+- **stdlib `struct`** for binary packing.
+- Type hints required throughout. Prefer `from __future__ import annotations`.
+- Docstrings are required on every public class and function. Match the
+  existing smithers_py voice (terse, plain English, no marketing).
+
+### Existing smithers_py conventions to match
+
+- Tables are named `ts_*` (TS-compatible namespace, distinct from
+  upstream's `_smithers_*`). Single SQLite file shared across subsystems.
+- Public exports listed explicitly in `__init__.py` `__all__`.
+- Tests use `pytest`, `pytest-asyncio`, and `tempfile` fixtures.
+
+### Subsystem spec
+
+The subsystem you're porting is described below between markers. The spec
+is authoritative for the API surface — match it exactly. Internal
+implementation choices are yours.
+
+--- BEGIN SPEC ---
+{props.spec}
+--- END SPEC ---
+
+### Optional upstream TypeScript reference
+
+If the upstream TS .d.ts content was provided, use it as a *reference* for
+type signatures, but write idiomatic Python — don't transliterate.
+
+--- BEGIN UPSTREAM REFERENCE ---
+{props.upstreamReferenceDts}
+--- END UPSTREAM REFERENCE ---
+
+### Output
+
+Produce the complete Python file content for `{props.path}`. Include all
+imports, docstrings, classes, functions, and inline comments.
+
+Return JSON:
+
+```json
+{
+  "schema_version": "smithers-port-subsystem-file-v0",
+  "path": "{props.path}",
+  "content": "<full Python source as a JSON string>",
+  "loc": <int, count of \\n-separated lines>,
+  "notes": "<one-line note on any design choices worth flagging>",
+  "tokensUsed": <int, your best estimate>
+}
+```
+
+The `content` field MUST be a single JSON string (escape newlines as
+`\\n`, escape `"` as `\\"`). Do not wrap in markdown code fences.

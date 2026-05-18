@@ -190,3 +190,48 @@ export const portSyncFinalSchema = z.object({
   estimatedSpendMicrocents: z.number().int().min(0),
   nextActions: z.array(z.string()).default([]),
 });
+
+
+// -------------------- Subsystem port (sister meta-workflow) -----------------
+//
+// While the main meta-workflow ports PRs (deltas against existing files), this
+// sister workflow ports whole *subsystems* from a markdown spec. Used to fill
+// in Python-port surfaces upstream Smithers has but smithers_py doesn't yet
+// (memory, scorers, tools, serve, etc.).
+
+export const subsystemFileInputSchema = z.object({
+  path: z.string(),
+  role: z.enum(["module", "test", "types", "init", "helper"]).default("module"),
+  hints: z.string().default(""),
+});
+
+export const subsystemPortInputSchema = z.object({
+  subsystemName: z.string(),
+  pythonTargetDir: z.string(),
+  spec: z.string(),
+  files: z.array(subsystemFileInputSchema).min(1),
+  upstreamReferenceDts: z.string().default(""),
+  applyToDisk: z.boolean().default(false),
+  forkRepoPath: z.string().default("/Users/luis/smithers"),
+});
+
+export const subsystemFileTranslationSchema = z.object({
+  schema_version: z.literal("smithers-port-subsystem-file-v0"),
+  path: z.string(),
+  content: z.string(),
+  loc: z.number().int().min(0),
+  notes: z.string().default(""),
+  tokensUsed: z.number().int().min(0).default(0),
+});
+
+export const subsystemPortFinalSchema = z.object({
+  schema_version: z.literal("smithers-port-subsystem-final-v0"),
+  subsystem: z.string(),
+  filesProduced: z.array(z.string()),
+  totalLoc: z.number().int().min(0),
+  appliedPath: z.string().default(""),
+  tokensIn: z.number().int().min(0),
+  tokensOut: z.number().int().min(0),
+  estimatedSpendMicrocents: z.number().int().min(0),
+  summary: z.string(),
+});

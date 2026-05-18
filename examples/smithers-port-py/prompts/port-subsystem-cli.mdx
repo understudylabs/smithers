@@ -1,0 +1,96 @@
+## Port a subsystem to Python — single agent, file tools
+
+You are porting the `smithers_py.{props.subsystemName}` subsystem.
+
+WORKING DIRECTORY: `{props.forkRepoPath}`
+TARGET DIRECTORY: `{props.pythonTargetDir}`
+
+You have `Read`, `Write`, `Edit`, `Grep`, `Glob`, and `Bash` tools. Use
+them to read existing smithers_py code for context, write each Python
+file directly to disk, and verify the result before returning.
+
+### Procedure
+
+1. Make the target directory: `Bash` `mkdir -p {props.forkRepoPath}/{props.pythonTargetDir}`
+2. For each file listed below, `Write` complete Python source to
+   `{props.forkRepoPath}/{props.pythonTargetDir}/<path>`. Before writing a
+   file that references symbols from another file in this subsystem,
+   `Read` that file to confirm the exact export names.
+3. After all files exist, run:
+
+   ```
+   Bash: cd {props.forkRepoPath} && python -c "from {props.pythonTargetDir.replace('/', '.')} import *"
+   ```
+
+   Fix any `ImportError` with `Edit`.
+4. Then run:
+
+   ```
+   Bash: cd {props.forkRepoPath} && smithers_py/.venv/bin/python -m pytest {props.pythonTargetDir}/test_{props.subsystemName}.py -q
+   ```
+
+   Fix any test failures with `Edit`. Iterate up to 5 times.
+
+### Files to produce
+
+{props.files.map((f) => `- \`${f.path}\` (${f.role}) — ${f.hints}`).join("\n")}
+
+### Spec
+
+The subsystem you're porting is described between markers. The spec is
+authoritative for the **public API surface**; internal implementation
+choices are yours. Match upstream Smithers' contract where the Python
+ecosystem has a clean equivalent; substitute idiomatic Python where it
+doesn't.
+
+--- BEGIN SPEC ---
+
+{props.spec}
+
+--- END SPEC ---
+
+### Python idioms (non-negotiable)
+
+- Pydantic v2 for data models (`BaseModel`, `model_validate`, `Field`).
+- `asyncio` for concurrency. No Effect-ts patterns.
+- stdlib `sqlite3` with `PRAGMA journal_mode=WAL`. Use `aiosqlite` only
+  for async-DB modules.
+- FastAPI for HTTP servers, httpx for HTTP clients.
+- stdlib `struct` for binary packing — no numpy.
+- Type hints throughout. `from __future__ import annotations` at top
+  of every file.
+- Docstrings on every public class and function. Match smithers_py
+  voice: terse, plain English, no marketing.
+
+### Existing smithers_py conventions
+
+- Tables named `ts_*` (TS-compatible namespace). Single SQLite file
+  shared across subsystems. WAL mode.
+- Public exports listed explicitly in `__init__.py` `__all__`.
+- Tests use `pytest`, `pytest-asyncio`, `tempfile` fixtures. Match
+  patterns in `smithers_py/memory/test_memory.py`,
+  `smithers_py/tools/test_tools.py`,
+  `smithers_py/scorers/test_scorers.py`.
+
+### Return shape
+
+After every file is written **and** the import test **and** pytest both
+pass, return ONLY this JSON object — no surrounding prose:
+
+```json
+{
+  "schema_version": "smithers-port-subsystem-final-v0",
+  "subsystem": "{props.subsystemName}",
+  "filesProduced": ["__init__.py", "..."],
+  "totalLoc": <int>,
+  "appliedPath": "{props.forkRepoPath}/{props.pythonTargetDir}",
+  "tokensIn": 0,
+  "tokensOut": 0,
+  "estimatedSpendMicrocents": 0,
+  "summary": "Ported {props.subsystemName}: N files, M LoC. Tests passed in <N>s."
+}
+```
+
+If tests still fail after 5 fix iterations, return the JSON with
+`summary` describing which tests failed and why. Set
+`filesProduced` to whatever you did write.

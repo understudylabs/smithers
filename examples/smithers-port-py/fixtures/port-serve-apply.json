@@ -1,0 +1,35 @@
+{
+  "subsystemName": "serve",
+  "pythonTargetDir": "smithers_py/serve",
+  "spec": "# `smithers_py.serve` — single-workflow HTTP server\n\nMirrors upstream Smithers' \"serve mode\" (`createServeApp` /\n`smithers up --serve`). FastAPI-based HTTP app that runs alongside a\nsingle workflow and exposes REST + SSE endpoints for run lifecycle,\napprovals, signals, and metrics.\n\n## Public surface\n\n```python\nfrom smithers_py.serve import (\n    ServeOptions,\n    create_serve_app,\n)\n\nopts = ServeOptions(\n    db_path=\"smithers.db\",\n    run_id=\"abc123\",\n    auth_token=\"sk-secret\",        # None disables auth\n    metrics=True,                  # exposes /metrics\n)\napp = create_serve_app(opts)\n\n# Standard ASGI app — uvicorn / hypercorn / etc.\nimport uvicorn\nuvicorn.run(app, host=\"127.0.0.1\", port=7331)\n```\n\n## Routes\n\n| Method | Path | Purpose | Auth |\n| --- | --- | --- | --- |\n| GET | `/health` | Liveness probe. Returns `{\"ok\": true}`. | none |\n| GET | `/` | Run status + node summary. | bearer |\n| GET | `/events?afterSeq=N` | SSE stream of lifecycle events. | bearer |\n| GET | `/frames?limit=50&afterFrameNo=N` | List committed frames. | bearer |\n| POST | `/approve/{node_id}` | Approve a pending gate. | bearer |\n| POST | `/deny/{node_id}` | Deny a pending gate. | bearer |\n| POST | `/signal/{signal_name}` | Deliver a typed signal. | bearer |\n| POST | `/cancel` | Cancel the run. | bearer |\n| GET | `/metrics` | Prometheus exposition. | bearer |\n\n## Auth\n\nWhen `auth_token` is not None, every request except `/health` must\ninclude either:\n\n- `Authorization: Bearer <token>`, or\n- `x-smithers-key: <token>`\n\nMissing or wrong token returns `401` with body:\n\n```json\n{\"error\": {\"code\": \"UNAUTHORIZED\", \"message\": \"invalid or missing token\"}}\n```\n\n## Body schemas\n\n### `GET /` response\n\n```json\n{\n  \"runId\": \"abc123\",\n  \"workflowName\": \"review\",\n  \"status\": \"running\",\n  \"startedAtMs\": 1707500000000,\n  \"finishedAtMs\": null,\n  \"summary\": {\"finished\": 3, \"in-progress\": 1, \"pending\": 2}\n}\n```\n\n### `POST /approve/{node_id}` request\n\nAll fields optional:\n\n```json\n{\n  \"iteration\": 0,\n  \"note\": \"looks good\",\n  \"decided_by\": \"alice\"\n}\n```\n\nReturns `{\"runId\": \"...\"}` on success. Returns `404` with code\n`NODE_NOT_FOUND` if the gate doesn't exist.\n\n### `GET /events` SSE\n\nStandard `text/event-stream`. Each event:\n\n```\nevent: smithers\ndata: {\"type\": \"NodeStarted\", \"runId\": \"...\", \"nodeId\": \"...\", ...}\nid: 42\n\n```\n\nPolls the events table every 500 ms. Auto-closes when the run reaches\na terminal state (`finished`, `failed`, `cancelled`). Sends a comment\nkeep-alive every 10 s.\n\nReconnect with `?afterSeq=N` to resume from a known position.\n\n## Error envelope\n\nAll non-2xx responses use:\n\n```json\n{\"error\": {\"code\": \"ERROR_CODE\", \"message\": \"Human description\"}}\n```\n\nCommon codes:\n\n| Code | Status |\n| --- | --- |\n| `INVALID_REQUEST` | 400 |\n| `UNAUTHORIZED` | 401 |\n| `NOT_FOUND` | 404 |\n| `RUN_NOT_FOUND` | 404 |\n| `NODE_NOT_FOUND` | 404 |\n| `RUN_NOT_ACTIVE` | 409 |\n| `SERVER_ERROR` | 500 |\n\n## DB tables read\n\n- `ts_runs` — run status, workflow name, started/finished timestamps\n- `ts_approvals` — pending approval gates (for `/approve`, `/deny`)\n- `ts_signals` — write here for `/signal/{name}`\n\nThe serve module does NOT own these tables — they're owned by\n`smithers_py.runtime.store`. The serve module just queries them.\n\n## Implementation notes\n\n- Use **FastAPI** for the app, **Pydantic** models for request/response\n  bodies (auto-generates OpenAPI).\n- SSE uses `fastapi.responses.StreamingResponse` with media type\n  `text/event-stream`.\n- Auth via a single `Depends(auth_dependency)` function that reads\n  `Authorization` / `x-smithers-key` headers.\n- Polling for SSE: 500 ms interval, `asyncio.sleep`, query\n  `_smithers_events` (or `ts_events` — match what exists). Close on\n  terminal run state.\n- Metrics: use `prometheus-client` if available, otherwise return an\n  empty `text/plain` body.\n\n## Files to produce\n\n- `__init__.py` — public exports (`ServeOptions`, `create_serve_app`)\n- `app.py` — the FastAPI factory + all route handlers\n- `auth.py` — bearer-token dependency\n- `events_stream.py` — SSE polling generator\n- `test_serve.py` — pytest-asyncio + `httpx.AsyncClient` integration tests\n  (auth, health, status, approve/deny, error envelope)\n",
+  "files": [
+    {
+      "path": "__init__.py",
+      "role": "init",
+      "hints": "Export ServeOptions and create_serve_app at module top-level."
+    },
+    {
+      "path": "auth.py",
+      "role": "module",
+      "hints": "FastAPI dependency for bearer-token auth. Accept either Authorization: Bearer <token> or x-smithers-key: <token>. Reads token from ServeOptions.auth_token."
+    },
+    {
+      "path": "events_stream.py",
+      "role": "module",
+      "hints": "SSE generator that polls the events table every 500ms and yields events as text/event-stream chunks. Closes on terminal run state. Sends keep-alive comments every 10s."
+    },
+    {
+      "path": "app.py",
+      "role": "module",
+      "hints": "FastAPI app factory create_serve_app(opts). All routes from the spec. Use Pydantic BaseModel for request/response bodies. Uses ServeOptions dataclass for config."
+    },
+    {
+      "path": "test_serve.py",
+      "role": "test",
+      "hints": "pytest-asyncio + httpx.AsyncClient. Test: /health no-auth, /health auth-bypassed, GET / returns run summary, 401 on missing token, 404 on unknown node_id, approve/deny happy paths, signal POST, cancel POST, error envelope shape."
+    }
+  ],
+  "upstreamReferenceDts": "",
+  "applyToDisk": true,
+  "forkRepoPath": "/Users/luis/smithers"
+}
