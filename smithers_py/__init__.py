@@ -195,6 +195,25 @@ from .memory import (
     TtlGarbageCollector,
 )
 
+# Tools sandbox (read/write/edit/grep/bash + define_tool)
+from .tools import (
+    Tool,
+    ToolCallLog,
+    ToolCallRecord,
+    ToolContext,
+    ToolError,
+    ToolExecuteFn,
+    ToolSecurityError,
+    bash as tool_bash,
+    define_tool,
+    edit as tool_edit,
+    grep as tool_grep,
+    invoke_tool,
+    read as tool_read,
+    tools as tool_bundle,
+    write as tool_write,
+)
+
 __all__ = [
     # Database
     'SmithersDB',
@@ -307,6 +326,22 @@ __all__ = [
     'SummarizeFn',
     'TokenLimiter',
     'TtlGarbageCollector',
+    # Tools sandbox
+    'Tool',
+    'ToolCallLog',
+    'ToolCallRecord',
+    'ToolContext',
+    'ToolError',
+    'ToolExecuteFn',
+    'ToolSecurityError',
+    'define_tool',
+    'invoke_tool',
+    'tool_bash',
+    'tool_bundle',
+    'tool_edit',
+    'tool_grep',
+    'tool_read',
+    'tool_write',
 ]
 
 __version__ = '1.0.0'
