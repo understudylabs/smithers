@@ -1,5 +1,15 @@
 # Smithers-Py
 
+> **Resume notice (May 2026).** This branch is being picked up and brought
+> forward to parity with the current `main` branch of upstream Smithers, as a
+> community contribution by [Understudy Labs](https://understudylabs.com).
+> The original `v1.0.0` work was authored upstream and last touched
+> 2026-01-23; our changes land on the `port/resume` branch in
+> [`understudylabs/smithers`](https://github.com/understudylabs/smithers).
+> Intent is to PR the resumed work back to `smithersai/smithers:python`
+> once it's caught up — see [`PORT_RESUME.md`](../PORT_RESUME.md) at the
+> repo root for the plan, scope, and coordination notes.
+
 Python orchestration framework for AI agent coordination with React-like semantics.
 
 ## Overview
