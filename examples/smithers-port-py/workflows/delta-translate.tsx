@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { agentsFor } from "../components/agents.ts";
 import { estimateCostMicrocents, readActualTokenUsage, stableNodeId } from "../components/sync-rules.ts";
-import { fetchPrDiff } from "../components/upstream-watch.ts";
+import { fetchPrDiff, readTargetFile } from "../components/upstream-watch.ts";
 import {
   classificationSummarySchema,
   translationRowSchema,
@@ -64,6 +64,11 @@ export default smithers((ctx) => {
                   maxChars: DIFF_MAX_CHARS,
                 })
               : "(no upstreamRepo provided — diff unavailable)";
+            const targetPath = row.pythonTarget || `smithers_py/runtime/pr_${row.prNumber}.py`;
+            const target = readTargetFile({
+              forkRepoPath: ctx.input.forkRepoPath,
+              relativePath: targetPath,
+            });
             return (
               <Task
                 key={String(row.prNumber)}
@@ -76,7 +81,9 @@ export default smithers((ctx) => {
                   prNumber={String(row.prNumber)}
                   prTitle={upstream?.title ?? "(unknown)"}
                   prUrl={upstream?.htmlUrl ?? ""}
-                  pythonTarget={row.pythonTarget || `smithers_py/runtime/pr_${row.prNumber}.py`}
+                  pythonTarget={targetPath}
+                  targetExists={target.exists ? "yes" : "no"}
+                  targetContent={target.exists ? target.content : "(file does not exist yet — emit new)"}
                   action={row.action}
                   prDiff={diff}
                   diffMaxChars={String(DIFF_MAX_CHARS)}

@@ -4,7 +4,18 @@ PR_NUMBER: {props.prNumber}
 PR_TITLE: {props.prTitle}
 PR_URL: {props.prUrl}
 PYTHON_TARGET: {props.pythonTarget}
+TARGET_EXISTS: {props.targetExists}
 ACTION: {props.action}
+
+### Current contents of the Python target file
+
+If the file exists, this is what you're editing — produce a diff
+against this exact content, do not rewrite from scratch. If the file
+does not exist, emit a new file from scratch.
+
+--- BEGIN PYTHON TARGET ---
+{props.targetContent}
+--- END PYTHON TARGET ---
 
 ### Upstream diff (truncated to {props.diffMaxChars} chars)
 

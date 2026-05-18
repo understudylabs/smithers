@@ -16,6 +16,35 @@ export type UpstreamPr = {
 };
 
 
+export function readTargetFile(args: {
+  forkRepoPath: string;
+  relativePath: string;
+  maxChars?: number;
+}): { content: string; exists: boolean; truncated: boolean } {
+  const max = args.maxChars ?? 16_000;
+  const abs = args.relativePath.startsWith("/")
+    ? args.relativePath
+    : `${args.forkRepoPath}/${args.relativePath}`;
+  try {
+    const raw = execSync(`cat ${JSON.stringify(abs)}`, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    if (raw.length <= max) {
+      return { content: raw, exists: true, truncated: false };
+    }
+    return {
+      content: raw.slice(0, max) + `\n... [truncated; file was ${raw.length} chars]`,
+      exists: true,
+      truncated: true,
+    };
+  } catch {
+    return { content: "", exists: false, truncated: false };
+  }
+}
+
+
 export function fetchPrDiff(args: {
   repo: string;
   number: number;

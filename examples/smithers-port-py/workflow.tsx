@@ -214,9 +214,13 @@ export default smithers((ctx) => {
               const total = classify?.rows.length ?? 0;
               const ported = translate?.metrics.drafted ?? 0;
               const failed = translate?.metrics.failed ?? 0;
+              // Skipped = classifier-skipped (skip-v0, skip-forever,
+              // already-ported) + translator-skipped (deferred after
+              // reading the diff) + translator-failed.
               const skipped = (classify?.metrics.skipV0Count ?? 0) +
                 (classify?.metrics.skipForeverCount ?? 0) +
                 (classify?.metrics.alreadyPortedCount ?? 0) +
+                (translate?.metrics.skipped ?? 0) +
                 failed;
               // Roll up real classifier + translator cost. Both phases
               // record TokenUsageReported events; we sum classifier
