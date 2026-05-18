@@ -99,6 +99,49 @@ gating questions are:
 We won't try to answer (1)–(3) without upstream's input first. Outreach
 is in flight.
 
+### API surface delta (the actually-important finding)
+
+Spot-check against the public `bun-port-smithers/` example on current TS
+`main`: that workflow is built from `Workflow`, `Sequence`, `Parallel`,
+`Task` (with typed output schemas), `Subflow`, `ApprovalGate`, `HumanTask`,
+`Worktree`, `MergeQueue`.
+
+`smithers_py` v1.0.0 exposes a different taxonomy: `IfNode`, `PhaseNode`,
+`StepNode`, `RalphNode`, `WhileNode`, `FragmentNode`, `EachNode`,
+`ClaudeNode`, `EffectNode`. None of the TS components above have direct
+Python analogues today.
+
+So the catch-up is **not** "translate a few new files" — it's a design
+question. The two honest possibilities:
+
+- **TS shape is canonical going forward.** `smithers_py` adds `Sequence`,
+  `Parallel`, `Task`, `Subflow`, `ApprovalGate`, `HumanTask`, etc., maps
+  them onto the existing tick-loop engine, deprecates `Phase`/`Step`/`Ralph`
+  (or aliases them). This is the most surface-area to add.
+- **`smithers_py` shape is intentional and stays.** The TS-side
+  `Sequence`/`Parallel`/`Task` are syntactic sugar that compile down to
+  the same Phase/Step/Ralph primitives at the engine level. Catch-up means
+  building TS→Python workflow *translation* (and a thin `bun-port-py`
+  example that uses the Python primitives) rather than adding new
+  components.
+
+Without upstream's input we don't know which. The DM should probably
+include this exact question:
+
+> "Looking at the gap between `smithers_py`'s `Phase/Step/Ralph` model
+> and main's `Workflow/Sequence/Task/Subflow` model — was the v1.0.0
+> design intentional, or did `main` evolve past it? Is the right resume
+> path to add the TS shape into `smithers_py`, or to keep `smithers_py`'s
+> primitives and translate workflows?"
+
+Demo target once that's resolved: a Python port of
+[`examples/bun-port-smithers/`](examples/bun-port-smithers/) living at
+`examples/bun-port-smithers-py/`. Same phases (lifetimes, phase-A, compile,
+ungate, probes, tests, sweeps), same gates, same scorers — but using
+`smithers_py`. If that workflow runs end-to-end on a Bun checkout and
+produces SQLite rows the TS Smithers CLI can also `approve` and
+`inspect`, the resume is real.
+
 ## License & attribution
 
 Smithers is MIT-licensed. All resume work in this fork is MIT-licensed and
