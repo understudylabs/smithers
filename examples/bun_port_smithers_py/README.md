@@ -10,26 +10,47 @@ spec. The goal of this Python port is *wire compatibility*: every node, every
 output row, every approval gate behaves identically across runtimes, with
 identical SQLite row shape.
 
-## Status
+## Status — full port complete
 
 | Piece | Status |
 | --- | --- |
-| `workflow.py` (top-level) | Scaffolded with all 7 phases as Subflow placeholders |
-| `workflows/lifetime_classify.py` | Ported (graph shape + deterministic helpers) |
-| `workflows/phase_a_port.py` | Not yet ported |
-| `workflows/crate_compile_bringup.py` | Not yet ported |
-| `workflows/ungate_proper_port.py` | Not yet ported |
-| `workflows/panic_probe_swarm.py` | Not yet ported |
-| `workflows/test_swarm.py` | Not yet ported |
-| `workflows/audit_sweeps.py` | Not yet ported |
-| `components/schemas.py` | Lifetime + top-level schemas only |
-| `components/agents.py` | Dry-mode for every agent name (16 total). Real-mode warns and falls back to dry until `smithers_py` engine learns `TaskNode.agent` dispatch. |
-| `components/porting_rules.py` | Stable node ids, field keys, cache keys, sampling, TSV synth |
+| `workflow.py` (top-level) | **Wired** — all 7 phase Subflows point at real workflows |
+| `workflows/lifetime_classify.py` | ✅ Ported |
+| `workflows/phase_a_port.py` | ✅ Ported (per-file implement/verify/fix Sequence in Parallel) |
+| `workflows/crate_compile_bringup.py` | ✅ Ported (per-tier Sequence of per-crate compile Loops) |
+| `workflows/ungate_proper_port.py` | ✅ Ported (per-target Loop with patch + 2-reviewer Parallel + decision) |
+| `workflows/panic_probe_swarm.py` | ✅ Ported (build → Parallel probes → dedupe → report Loop) |
+| `workflows/test_swarm.py` | ✅ Ported (per-area Loop + Worktree + MergeQueue) |
+| `workflows/audit_sweeps.py` | ✅ Ported |
+| `components/schemas.py` | ✅ Full — every Zod schema mirrored as Pydantic |
+| `components/porting_rules.py` | ✅ Stable ids, cache keys, sampling, TSV synth, plus new helpers for normalize_port_files, plan_crates_by_tier, dedupe_failures, survey_targets, survey_sweeps |
+| `components/agents.py` | Dry-mode for all 16 agents. Real-mode adapter pending v0.2 (AgentLike protocol is in place). |
+| `components/scorers.py` | Stub (returns empty list). Real per-task scorer hooks land in v0.2. |
+| Engine dispatch on every TS-shape primitive | ✅ Workflow / Sequence / Parallel / Branch / Loop / Task / Subflow / ApprovalGate / HumanTask / Worktree / MergeQueue all execute end-to-end |
+| Cross-runtime row parity | ✅ Verified on the `examples/wire_compat/` canonical workflow — same SQLite row set as upstream TS |
 
-As of 2026-05-18 the workflow runs end-to-end via `smithers-ts up` using
-the `smithers_py.runtime` runner. Output rows persist to SQLite, the
-post-lifetimes ApprovalGate pauses the run, and `smithers-ts approve`
-resumes it.
+Run the full 7-phase port in one command:
+
+```bash
+cd /Users/luis/smithers/smithers_py
+uv run python -c "
+import sys; sys.path.insert(0, '/Users/luis/smithers')
+from examples.bun_port_smithers_py.workflow import bun_port_workflow
+from smithers_py import run_workflow
+result = run_workflow(bun_port_workflow, input={
+    'repo': '/tmp/bun', 'requireOperatorPlan': False,
+    'phases': ['lifetimes','phaseA','compile','ungate','probes','tests','sweeps'],
+    'files': [{'zig':'src/http/http.zig','crate':'http','loc':1200}],
+    'crates': [{'name':'http','tier':0}],
+    'targets': [{'id':'http-server','crate':'http','file':'src/http/lib.rs'}],
+    'probes': [{'id':'cli-help','cmd':'--help'}],
+    'areas': [{'id':'bun-http','glob':'test/js/bun/http/','crate':'http'}],
+    'sweeps': [{'id':'todo-sweep','kind':'todo','pattern':'TODO','scope':'src/'}],
+    'useWorktrees': False,
+}, db_path='/tmp/bun.db')
+print(result.status, result.output['summary'])
+"
+```
 
 ## Running
 

@@ -109,11 +109,34 @@ slice of the API surface most workflows actually use:
 - Real concurrency in `ParallelNode` — sequential within a frame today.
 - Real timeout enforcement on Tasks (`timeout_ms` is a typed field but
   no thread/asyncio-backed cancellation yet).
-- The Ralph loop primitive.
 - Provider adapters (Anthropic SDK, Claude Code, Codex, Pi, OpenCode).
 - The Effect API composition model on the Python side.
 - Canonical agent trace events (#135 — wait for upstream).
 - The gateway server / client / HTTP boundaries.
+- `Signal` / `WaitForEvent` for external CI integration (used in
+  test-swarm). The bun-port-py test_swarm workflow honors the
+  `awaitExternalCiSignal` flag structurally but doesn't pause.
 
 These are the v0.2 backlog. Each is a discrete lift; none block the v0.1
 MVP from being usable today.
+
+## Bonus: bun-port-smithers fully ported (2026-05-18)
+
+All 7 phases of upstream's canonical bun-port example are now ported to
+Python and execute end-to-end in dry mode through the `smithers_py.runtime`
+walker. Each phase produces a coherent PhaseDone output:
+
+```
+lifetimes → completed | Lifetime classification produced 2 field row(s)
+phaseA    → completed | Phase A: 2/2 clean, 2 fix task(s).
+compile   → completed | Compile: 2/2 crates green, 0 gated modules.
+ungate    → completed | Ungate: 1/1 approved, 1 patched.
+probes    → completed | Probes: 1/1 passed, 0 unique failures.
+tests     → completed | Test swarm: 1/1 areas green, 1 merged.
+sweeps    → completed | Sweeps: 1 fixed across 1 sweep(s).
+```
+
+The graph uses every TS-shape primitive: WorkflowNode, SequenceNode,
+ParallelNode, BranchNode (transitively via lifetime), LoopNode,
+TaskNode, SubflowNode, ApprovalGateNode, HumanTaskNode, WorktreeNode,
+MergeQueueNode. See [`examples/bun_port_smithers_py/`](examples/bun_port_smithers_py/).

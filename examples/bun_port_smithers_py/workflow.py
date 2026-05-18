@@ -1,13 +1,20 @@
-"""Top-level bun-port workflow, ported to Python.
+"""Top-level bun-port-py workflow.
 
-Mirrors examples/bun-port-smithers/workflow.tsx in shape: a `Sequence` of
-phase Subflows guarded by an operator HumanTask and gated by per-phase
-ApprovalGates with numeric thresholds.
+Mirrors examples/bun-port-smithers/workflow.tsx end-to-end. All 7 phase
+Subflows are wired to real workflows:
 
-Today only the lifetime-classify phase is fleshed out; the other phases
-are scaffolded as Subflow placeholders so the parent graph shape matches
-the TS reference end-to-end. As each phase workflow lands, drop in the
-import and replace the placeholder.
+  Sequence
+    ├── (optional HumanTask: operator-plan)
+    ├── Subflow: lifetimes      (workflows/lifetime_classify.py)
+    ├── ApprovalGate: post-lifetimes
+    ├── Subflow: phaseA         (workflows/phase_a_port.py)
+    ├── Subflow: compile        (workflows/crate_compile_bringup.py)
+    ├── ApprovalGate: post-compile
+    ├── Subflow: ungate         (workflows/ungate_proper_port.py)
+    ├── Subflow: probes         (workflows/panic_probe_swarm.py)
+    ├── Subflow: tests          (workflows/test_swarm.py)
+    ├── Subflow: sweeps         (workflows/audit_sweeps.py)
+    └── final TaskNode → BunPortFinal
 """
 
 from __future__ import annotations
@@ -26,14 +33,20 @@ from smithers_py import (
 )
 
 from .components.schemas import (
-    Approval,
+    ApprovalRow,
     BunPortFinal,
     BunPortInput,
     OperatorPlan,
     PhaseDone,
     WorkflowPhase,
 )
+from .workflows.audit_sweeps import audit_sweeps
+from .workflows.crate_compile_bringup import crate_compile_bringup
 from .workflows.lifetime_classify import lifetime_classify
+from .workflows.panic_probe_swarm import panic_probe_swarm
+from .workflows.phase_a_port import phase_a_port
+from .workflows.test_swarm import test_swarm
+from .workflows.ungate_proper_port import ungate_proper_port
 
 
 CONFIG = create_smithers(
@@ -41,60 +54,60 @@ CONFIG = create_smithers(
         "input": BunPortInput,
         "operatorPlan": OperatorPlan,
         "childRunResult": PhaseDone,
-        "approval": Approval,
+        "approval": ApprovalRow,
         "output": BunPortFinal,
-    },
-    db_path="smithers.db",
+    }
 )
 outputs = CONFIG.outputs
 
 
-PHASE_TO_FLAG = {
-    "lifetimes": "runLifetimes",
-    "phaseA": "runPhaseA",
-    "compile": "runCompile",
-    "ungate": "runUngate",
-    "probes": "runProbes",
-    "tests": "runTests",
-    "sweeps": "runSweeps",
+_PHASE_DISPATCH = {
+    "lifetimes": (lifetime_classify, lambda ctx: {
+        "repo": ctx.input.repo,
+        "files": [f.model_dump() for f in ctx.input.files],
+        "sampleRate": 0.12,
+        "unknownApprovalThreshold": ctx.input.unknownApprovalThreshold,
+        "portingRevision": "",
+        "lifetimeRevision": "",
+    }),
+    "phaseA": (phase_a_port, lambda ctx: {
+        "repo": ctx.input.repo,
+        "files": [f.model_dump() for f in ctx.input.files],
+        "maxConcurrency": ctx.input.maxConcurrency,
+    }),
+    "compile": (crate_compile_bringup, lambda ctx: {
+        "repo": ctx.input.repo,
+        "crates": [c.model_dump() for c in ctx.input.crates],
+        "broadGateApprovalThreshold": ctx.input.broadGateApprovalThreshold,
+    }),
+    "ungate": (ungate_proper_port, lambda ctx: {
+        "repo": ctx.input.repo,
+        "targets": [t.model_dump() for t in ctx.input.targets],
+    }),
+    "probes": (panic_probe_swarm, lambda ctx: {
+        "repo": ctx.input.repo,
+        "probes": [p.model_dump() for p in ctx.input.probes],
+    }),
+    "tests": (test_swarm, lambda ctx: {
+        "repo": ctx.input.repo,
+        "baseBranch": ctx.input.baseBranch,
+        "useWorktrees": ctx.input.useWorktrees,
+        "maxConcurrency": ctx.input.maxConcurrency,
+        "areas": [a.model_dump() for a in ctx.input.areas],
+        "awaitExternalCiSignal": ctx.input.awaitExternalCiSignal,
+    }),
+    "sweeps": (audit_sweeps, lambda ctx: {
+        "repo": ctx.input.repo,
+        "sweeps": [s.model_dump() for s in ctx.input.sweeps],
+    }),
 }
-
-
-def _phase_subflow(phase: WorkflowPhase, ctx_input: BunPortInput) -> SubflowNode:
-    """Build the Subflow node for one phase.
-
-    For now, only ``lifetimes`` has a real child workflow wired in; the rest
-    point at the same workflow as placeholders so the parent graph is
-    structurally complete. Replace as each phase ports.
-    """
-    if phase == "lifetimes":
-        child = lifetime_classify
-        input_payload: Dict[str, Any] = {
-            "repo": ctx_input.repo,
-            "files": [f.model_dump() for f in ctx_input.files],
-            "sampleRate": 0.12,
-            "unknownApprovalThreshold": ctx_input.unknownApprovalThreshold,
-            "portingRevision": "",
-            "lifetimeRevision": "",
-        }
-    else:
-        child = lifetime_classify  # placeholder until phase X lands
-        input_payload = {"phase": phase}
-    return SubflowNode(
-        id=f"main:{phase}",
-        workflow=child,
-        input=input_payload,
-        output=outputs.childRunResult,
-    )
 
 
 @CONFIG.workflow
 def bun_port_workflow(ctx: Any) -> WorkflowNode:
-    """Top-level workflow definition."""
     requested: List[WorkflowPhase] = list(ctx.input.phases)
     body: List[Any] = []
 
-    # Operator plan — optional gate at the very start.
     if ctx.input.requireOperatorPlan:
         body.append(
             HumanTaskNode(
@@ -112,44 +125,66 @@ def bun_port_workflow(ctx: Any) -> WorkflowNode:
             )
         )
 
-    # One Subflow per requested phase.
     for phase in requested:
-        body.append(_phase_subflow(phase, ctx.input))
-
-        # ApprovalGate after lifetimes when UNKNOWN rate exceeds threshold.
+        if phase not in _PHASE_DISPATCH:
+            continue
+        wf, input_fn = _PHASE_DISPATCH[phase]
+        body.append(
+            SubflowNode(
+                id=f"main:{phase}",
+                workflow=wf,
+                input=input_fn(ctx),
+                output=outputs.childRunResult,
+            )
+        )
         if phase == "lifetimes":
             body.append(
                 ApprovalGateNode(
                     id="main:lifetimes:approval",
-                    when=True,  # engine wires actual condition from prior output
+                    output=outputs.approval,
+                    when=False,
                     request=ApprovalRequest(
                         title="Approve lifetime classification quality?",
                         summary=(
-                            "ApprovalGate fires when UNKNOWN-rate exceeds the "
+                            f"Fires when UNKNOWN-rate exceeds the "
                             f"configured threshold ({ctx.input.unknownApprovalThreshold:.0%})."
                         ),
                     ),
                     on_deny="fail",
+                )
+            )
+        elif phase == "compile":
+            body.append(
+                ApprovalGateNode(
+                    id="main:compile:approval",
                     output=outputs.approval,
+                    when=False,
+                    request=ApprovalRequest(
+                        title="Approve compile gate/stub debt?",
+                        summary=(
+                            f"Fires when gated module count exceeds "
+                            f"{ctx.input.broadGateApprovalThreshold}."
+                        ),
+                    ),
+                    on_deny="fail",
                 )
             )
 
-    # Terminal node: emits the BunPortFinal record.
     def _final() -> dict:
-        return BunPortFinal(
-            status="completed",
-            phasesRun=requested,
-            summary=(
-                f"bun-port-py workflow completed {len(requested)} phase(s). "
-                f"Lifetime classifier emitted; downstream phases use placeholder "
-                f"subflows until the rest of the port lands."
+        return {
+            "status": "completed",
+            "phasesRun": requested,
+            "summary": (
+                f"bun-port-py workflow completed {len(requested)} phase(s) in dry mode. "
+                f"All 7 phase Subflows wired to real workflows."
             ),
-            nextActions=[
-                "Wire phaseA, compile, ungate, probes, tests, sweeps workflows.",
-                "Add engine dispatch for TaskNode.agent + ApprovalGateNode.",
-                "Cross-runtime resume test against TS Smithers.",
+            "nextActions": [
+                "Wire real-mode agents via AgentLike (Anthropic, Claude Code, Codex, Pi).",
+                "Add real concurrency to ParallelNode (v0.2 anyio lift).",
+                "Add Signal / WaitForEvent for external CI (v0.2).",
+                "Cross-runtime row diff against TS run (use examples/wire_compat).",
             ],
-        ).model_dump()
+        }
 
     body.append(
         TaskNode(

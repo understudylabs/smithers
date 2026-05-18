@@ -118,3 +118,84 @@ def lifetime_tsv(fields: Sequence[dict]) -> str:
 def tsv_preview(tsv: str, max_rows: int = 20) -> str:
     """First N rows of a TSV (header + max_rows), used in approval bodies."""
     return "\n".join(tsv.split("\n")[: max_rows + 1])
+
+
+# ----- Helpers for the remaining phases --------------------------------------
+
+
+def normalize_port_files(files):
+    """Phase A plan: for each Zig file, compute its Rust target path."""
+    out = []
+    for f in files:
+        zig = f.get("zig") if isinstance(f, dict) else f.zig
+        crate = (f.get("crate") if isinstance(f, dict) else f.crate) or "bun"
+        loc = (f.get("loc") if isinstance(f, dict) else f.loc) or 0
+        rs = zig.replace(".zig", ".rs") if zig else ""
+        out.append({"zig": zig, "rs": rs, "loc": loc, "crate": crate})
+    return out
+
+
+def plan_crates_by_tier(crates):
+    """Group crates by tier so the compile phase bring-up can do tiers serially."""
+    tiers_dict = {}
+    for c in crates:
+        is_dict = isinstance(c, dict)
+        tier = c.get("tier", 0) if is_dict else c.tier
+        tiers_dict.setdefault(tier, []).append(
+            c if is_dict else c.model_dump()
+        )
+    tiers = [{"tier": t, "crates": cs} for t, cs in sorted(tiers_dict.items())]
+    return {"tiers": tiers, "totalCrates": len(crates)}
+
+
+def dedupe_failures(probe_results):
+    """Roll probe failures up into a deduped FailureSet keyed by (probeId, panic)."""
+    seen = {}
+    for r in probe_results:
+        if r is None:
+            continue
+        is_dict = isinstance(r, dict)
+        passed = r.get("passed") if is_dict else r.passed
+        if passed:
+            continue
+        pid = r.get("probeId") if is_dict else r.probeId
+        cmd = r.get("command") if is_dict else r.command
+        loc = r.get("panicLocation") if is_dict else r.panicLocation
+        asrt = r.get("assertion") if is_dict else r.assertion
+        key = f"{pid}|{loc or ''}|{asrt or ''}"
+        seen.setdefault(
+            key,
+            {
+                "failureKey": key,
+                "probeId": pid,
+                "command": cmd,
+                "panicLocation": loc,
+                "assertion": asrt,
+            },
+        )
+    failures = list(seen.values())
+    return {"totalFailures": len(failures), "failures": failures}
+
+
+def survey_targets(targets):
+    """Build the TargetSurvey for the ungate phase."""
+    survey = []
+    for t in targets:
+        is_dict = isinstance(t, dict)
+        survey.append(
+            {
+                "id": t.get("id") if is_dict else t.id,
+                "crate": t.get("crate") if is_dict else t.crate,
+                "file": t.get("file") if is_dict else t.file,
+                "reason": (t.get("reason") if is_dict else t.reason) or "",
+            }
+        )
+    return {"totalTargets": len(survey), "targets": survey}
+
+
+def survey_sweeps(sweeps):
+    """Build SweepSurvey for the audit-sweeps phase."""
+    out = []
+    for s in sweeps:
+        out.append(s.model_dump() if hasattr(s, "model_dump") else dict(s))
+    return {"sweeps": out, "total": len(out)}
