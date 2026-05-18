@@ -75,23 +75,46 @@ export function staticClassification(pr: {
 
 
 /**
- * Token + cost estimate for a single call.
+ * Per-model token pricing (microcents per token; microcent = 1e-6 USD).
  *
- * Pricing (claude-sonnet-4-5 as of 2026-05, microcents = 1e-6 USD):
- *   input  $3  / MTok = $3e-6/tok =  3 microcents/tok
- *   output $15 / MTok = $15e-6/tok = 15 microcents/tok
+ * Sonnet 4-5: Anthropic list pricing as of 2026-05. Verified against
+ *   the invoice ($3/MTok in, $15/MTok out).
+ * Fireworks: rates from the Fireworks public pricing page as of 2026-05;
+ *   may revise on invoice. Open-weights models are 5-15x cheaper than
+ *   Sonnet for input, ~6-25x cheaper for output. Compare against the
+ *   per-model invoice number before treating these as load-bearing.
  *
- * The earlier version of this function used 0.3 / 1.5 — a 10x
- * understatement that confused $0.30/MTok with $3/MTok. Fixed
- * 2026-05-18 after comparing engine-reported usage against the
- * Anthropic console invoice.
+ * IMPORTANT: model keys here must match the prefixes used by
+ *   SMITHERS_PORT_PY_AGENT_MODE (anthropic, fireworks-glm, ...). The
+ *   resolvePerModelRate() function maps mode strings to keys.
+ */
+export const MODEL_RATES: Record<string, { tokensInMicro: number; tokensOutMicro: number }> = {
+  "anthropic":       { tokensInMicro: 3,    tokensOutMicro: 15   },
+  "fireworks-glm":   { tokensInMicro: 0.2,  tokensOutMicro: 0.6  },
+  "fireworks-kimi":  { tokensInMicro: 0.6,  tokensOutMicro: 2.5  },
+  "fireworks-deepseek": { tokensInMicro: 0.5, tokensOutMicro: 1.5 },
+};
+
+export function resolvePerModelRate(modeOrModel: string | undefined):
+  { tokensInMicro: number; tokensOutMicro: number } {
+  const key = modeOrModel ?? "anthropic";
+  return MODEL_RATES[key] ?? MODEL_RATES["anthropic"];
+}
+
+/**
+ * Token + cost estimate for a single call. Defaults to Sonnet 4-5
+ * rates ($3/$15 per MTok). Pass `modeOrModel` to use per-model rates
+ * (e.g., "fireworks-glm"), useful when the workflow runs against open
+ * models on Fireworks.
  */
 export function estimateCostMicrocents(args: {
   tokensIn: number;
   tokensOut: number;
+  modeOrModel?: string;
 }): number {
-  const inMicro = Math.round(args.tokensIn * 3);
-  const outMicro = Math.round(args.tokensOut * 15);
+  const rate = resolvePerModelRate(args.modeOrModel);
+  const inMicro = Math.round(args.tokensIn * rate.tokensInMicro);
+  const outMicro = Math.round(args.tokensOut * rate.tokensOutMicro);
   return inMicro + outMicro;
 }
 

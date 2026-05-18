@@ -230,9 +230,11 @@ export default smithers((ctx) => {
                 runIdPrefix: ctx.runId,
                 nodeIdPrefix: "classify:",
               });
+              const mode = process.env.SMITHERS_PORT_PY_AGENT_MODE ?? "anthropic";
               const classifyCost = estimateCostMicrocents({
                 tokensIn: classifyUsage.tokensIn,
                 tokensOut: classifyUsage.tokensOut,
+                modeOrModel: mode,
               });
               const translateCost = translate?.metrics.estimatedCostUsdMicrocents ?? 0;
               const cost = classifyCost + translateCost;

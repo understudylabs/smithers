@@ -90,6 +90,7 @@ export default smithers((ctx) => {
                 output={outputs.classification}
                 agent={agents.classifier}
                 timeoutMs={5 * 60_000}
+                retries={2}
                 cache={{ by: () => cacheKey, version: "v1" }}
               >
                 <ClassifyDeltaPrompt

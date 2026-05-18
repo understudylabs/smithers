@@ -7,19 +7,38 @@
 
 import { AnthropicAgent, ClaudeCodeAgent, PiAgent } from "smithers-orchestrator";
 
+import { FireworksJsonAgent } from "./fireworks-json-agent.ts";
+
+// Fireworks-hosted open-weights models, OpenAI-compatible. The chat
+// endpoint is at /chat/completions under FIREWORKS_BASE_URL. Model
+// IDs come from `GET /models`; updated 2026-05-18.
+//
+// Pricing (per Fireworks public table, microcents per token where
+// 1 microcent = 1e-6 USD; revise on invoice):
+export const FIREWORKS_MODELS: Record<string, { id: string; tokensInMicro: number; tokensOutMicro: number }> = {
+  "glm":      { id: "accounts/fireworks/models/glm-5p1",        tokensInMicro: 0.2, tokensOutMicro: 0.6 },
+  "kimi":     { id: "accounts/fireworks/models/kimi-k2p6",      tokensInMicro: 0.6, tokensOutMicro: 2.5 },
+  "deepseek": { id: "accounts/fireworks/models/deepseek-v4-pro", tokensInMicro: 0.5, tokensOutMicro: 1.5 },
+};
+
 type AgentArgs = { prompt?: string; outputSchema?: unknown };
 type AgentResult = { text: string; output: Record<string, unknown> };
 type LocalAgent = { id: string; generate(args?: AgentArgs): Promise<AgentResult> };
 
 const useRealAgents = process.env.SMITHERS_PORT_PY_REAL_AGENTS === "1";
 
-// Two real-mode flavors:
-//   SMITHERS_PORT_PY_AGENT_MODE=anthropic  →  AnthropicAgent (AI SDK).
-//     Text-only generation; no filesystem tools. Generated diffs are
-//     captured in the run's row but NOT auto-applied. Safe to spend.
-//   SMITHERS_PORT_PY_AGENT_MODE=cli  →  ClaudeCodeAgent + PiAgent.
-//     CLI agents that read/write files. Requires `claude` and `pi`
-//     binaries on PATH; can mutate the working tree.
+// Real-mode flavors:
+//   SMITHERS_PORT_PY_AGENT_MODE=anthropic   →  AnthropicAgent (AI SDK).
+//     Text-only generation; no filesystem tools. Safe default.
+//   SMITHERS_PORT_PY_AGENT_MODE=cli         →  ClaudeCodeAgent + PiAgent.
+//     CLI agents that read/write files. Requires CLIs on PATH.
+//   SMITHERS_PORT_PY_AGENT_MODE=fireworks-{glm|kimi|deepseek}
+//     OpenAIAgent pointed at Fireworks. Text-only; uses open weights.
+//     Cheaper than Sonnet (~5-15x) but quality varies by model.
+//   SMITHERS_PORT_PY_AGENT_MODE=fan-out
+//     Per-PR translation runs in parallel against [sonnet, glm, kimi,
+//     deepseek]; each model's output stored as a separate row for
+//     cost+quality comparison. See workflows/delta-translate.tsx.
 //
 // Default: "anthropic" (text-only, the safe choice for first run).
 const realAgentMode = process.env.SMITHERS_PORT_PY_AGENT_MODE ?? "anthropic";
@@ -126,6 +145,29 @@ function makeDryAgent(kind: string): LocalAgent {
 }
 
 
+function fireworksAgent(modelKey: string): FireworksJsonAgent {
+  const spec = FIREWORKS_MODELS[modelKey];
+  if (!spec) {
+    throw new Error(
+      `Unknown Fireworks model key '${modelKey}'. Known: ${Object.keys(FIREWORKS_MODELS).join(", ")}`,
+    );
+  }
+  const apiKey = process.env.FIREWORKS_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "FIREWORKS_API_KEY not set. Run ./setup-fireworks-key.sh first.",
+    );
+  }
+  const baseURL = process.env.FIREWORKS_BASE_URL ?? "https://api.fireworks.ai/inference/v1";
+  return new FireworksJsonAgent({
+    model: spec.id,
+    apiKey,
+    baseURL,
+    id: `fireworks:${modelKey}`,
+  });
+}
+
+
 function realWriterAgent(repo: string, kind: string): any {
   if (!useRealAgents) return makeDryAgent(kind);
 
@@ -136,6 +178,13 @@ function realWriterAgent(repo: string, kind: string): any {
     return new AnthropicAgent({
       model: process.env.SMITHERS_PORT_PY_WRITER_MODEL ?? "claude-sonnet-4-5",
     });
+  }
+
+  // Single-model Fireworks override: fireworks-glm, fireworks-kimi,
+  // fireworks-deepseek. Routes the writer through one open model.
+  if (realAgentMode.startsWith("fireworks-")) {
+    const key = realAgentMode.slice("fireworks-".length);
+    return fireworksAgent(key);
   }
 
   return new ClaudeCodeAgent({
@@ -167,6 +216,14 @@ function realReviewerAgent(repo: string, kind: string): any {
     });
   }
 
+  // For Fireworks single-model mode, route the classifier+verifier
+  // through the same open model. (Fan-out mode is handled separately
+  // in the translate workflow.)
+  if (realAgentMode.startsWith("fireworks-")) {
+    const key = realAgentMode.slice("fireworks-".length);
+    return fireworksAgent(key);
+  }
+
   return new PiAgent({
     cwd: repo,
     provider: process.env.SMITHERS_PORT_PY_REVIEW_PROVIDER ?? "openai-codex",
@@ -186,3 +243,43 @@ export function agentsFor(args: { forkRepoPath: string }) {
     prEmitter:    realWriterAgent(args.forkRepoPath, "emit-pr"),
   };
 }
+
+
+/**
+ * Build the per-model agent map used by SMITHERS_PORT_PY_AGENT_MODE=fan-out.
+ * Returns one agent per model so the translate Subflow can fire N parallel
+ * Tasks per PR (one per model) and capture each output as its own row.
+ *
+ * `sonnet` uses AnthropicAgent. `glm`/`kimi`/`deepseek` use Fireworks.
+ */
+export function fanOutAgents(): Record<string, any> {
+  if (!useRealAgents) {
+    return {
+      sonnet: makeDryAgent("translate-delta"),
+      glm: makeDryAgent("translate-delta"),
+      kimi: makeDryAgent("translate-delta"),
+      deepseek: makeDryAgent("translate-delta"),
+    };
+  }
+  return {
+    sonnet: new AnthropicAgent({
+      model: process.env.SMITHERS_PORT_PY_WRITER_MODEL ?? "claude-sonnet-4-5",
+    }),
+    glm:      fireworksAgent("glm"),
+    kimi:     fireworksAgent("kimi"),
+    deepseek: fireworksAgent("deepseek"),
+  };
+}
+
+
+/**
+ * Per-model cost rates (microcents per token). Used by the translate
+ * summary task to compute per-model cost from real token-usage events.
+ * "sonnet" rate matches estimateCostMicrocents in sync-rules.ts.
+ */
+export const MODEL_RATES: Record<string, { tokensInMicro: number; tokensOutMicro: number }> = {
+  sonnet:   { tokensInMicro: 3,   tokensOutMicro: 15  },
+  glm:      FIREWORKS_MODELS.glm,
+  kimi:     FIREWORKS_MODELS.kimi,
+  deepseek: FIREWORKS_MODELS.deepseek,
+};

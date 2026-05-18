@@ -76,6 +76,7 @@ export default smithers((ctx) => {
                 output={outputs.translation}
                 agent={agents.translator}
                 timeoutMs={20 * 60_000}
+                retries={2}
               >
                 <TranslateDeltaPrompt
                   prNumber={String(row.prNumber)}
@@ -107,6 +108,7 @@ export default smithers((ctx) => {
                 runIdPrefix: ctx.runId,
                 nodeIdPrefix: "translate:",
               });
+              const mode = process.env.SMITHERS_PORT_PY_AGENT_MODE ?? "anthropic";
               return {
                 schema_version: "smithers-port-sync-translate-summary-v0" as const,
                 rows,
@@ -119,6 +121,7 @@ export default smithers((ctx) => {
                   estimatedCostUsdMicrocents: estimateCostMicrocents({
                     tokensIn: actual.tokensIn,
                     tokensOut: actual.tokensOut,
+                    modeOrModel: mode,
                   }),
                 },
               };
