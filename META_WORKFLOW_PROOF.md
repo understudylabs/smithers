@@ -1,141 +1,88 @@
-# Meta-workflow proof — recursive Smithers→smithers_py port
+# Recursive port proof
 
-Records the Phase 1 result of the `/goal` set on 2026-05-18:
-"Ship the recursive Smithers→smithers_py port — Smithers builds its
-own Python twin, Cory-style (bun-port-smithers + claude-p as
-reference patterns)."
+Ported four `smithers_py` subsystems by running a Smithers workflow
+that drives a `ClaudeCodeAgent` against a markdown spec. The agent
+writes Python directly, runs the generated `pytest` suite, iterates
+on failures, and exits with a manifest. Each port commits under a
+`meta-workflow:` prefix naming the run that produced it.
 
-## What landed
+| Subsystem | Run ID                | Output path                   | LoC   | Tests  | Commit     |
+| ---       | ---                   | ---                           | ---   | ---    | ---        |
+| serve     | `port-serve-cli-v2`   | `smithers_py/serve/`          | 756   | 12/12  | `d214662b` |
+| memory    | `port-mem-cli-v3`     | `smithers_py_meta/memory/`    | 1,004 | 16/16  | `f4764a53` |
+| tools     | `port-tools-cli`      | `smithers_py_meta/tools/`     | 450   | 35/35  | `63f9e82d` |
+| cache     | `port-cache-cli`      | `smithers_py_meta/cache/`     | 669   | 21/21  | `be6554f4` |
+| scorers   | `port-scorers-cli`    | discarded — see below         | —     | —      | —          |
 
-| Subsystem | Workflow run | Path | LoC | Tests | Acceptance | Commit |
-| --- | --- | --- | --- | --- | --- | --- |
-| **serve**   | `port-serve-cli-v2`   | `smithers_py/serve/`        | 756  | 12/12 | ✅ all 4 | `d214662b` |
-| **memory**  | `port-mem-cli-v3`     | `smithers_py_meta/memory/`  | 1004 | 16/16 | ✅ all 4 | `f4764a53` |
-| **tools**   | `port-tools-cli`      | `smithers_py_meta/tools/`   | 450  | 35/35 | ✅ all 4 | `63f9e82d` |
-| **scorers** | `port-scorers-cli`    | (discarded — see below)     | —    | —     | ❌      | —          |
-| **cache**   | `port-cache-cli`      | `smithers_py_meta/cache/`   | 669  | 21/21 | ✅ all 4 | `be6554f4` |
+Acceptance per goal (`/goal` set 2026-05-18): import-from-namespace
+works, tests pass, ≤$1/run on Sonnet 4.5, commit message identifies
+the workflow. Four runs cleared all four. Run script:
+[`scripts/verify-subsystem.sh`](./examples/smithers-port-py/scripts/verify-subsystem.sh).
 
-**4 of 5 ports succeeded. ~2,879 LoC of idiomatic Python, 84 tests, all
-passing.** Each successful port was committed with a `meta-workflow:`
-prefix identifying the workflow that produced it (criterion #4).
+## Two failure modes worth recording
 
-## Acceptance criteria (per /goal)
+**Memory v1/v2 (shortcut).** First two memory ports made zero `Write`
+tool calls. The agent saw the hand-coded `smithers_py/memory/`, ran
+its tests, declared the port complete, returned the manifest.
+Technically faithful to "test_memory.py passes"; not a port. Fixed in
+v3 by adding to the prompt: a prohibition on reading
+`smithers_py/<subsystem>/`, plus an acceptance contract requiring
+three specific Bash invocations (`ls`, import smoke, `pytest`) before
+the final JSON is allowed.
 
-For every ✅ row above:
+**Scorers (target override).** Agent followed the new
+read-prohibition but wrote its output to `smithers_py/scorers/`
+anyway, clobbering the hand-coded version. `appliedPath` confirmed
+the override; the working tree confirmed the writes. The agent had
+indexed the spec's example imports (`from smithers_py.scorers import
+...`) and used those paths as the target, not the workflow's
+`pythonTargetDir` input. Cache (next run) sidestepped this by
+rewriting the spec to use `smithers_py_meta.cache` in every example.
+That landed clean.
 
-1. `python -c "from <path>.<subsystem> import *"` succeeds
-2. `pytest test_<subsystem>.py` passes (16, 35, 21 tests respectively;
-   12 for serve)
-3. ≤$1.00 per subsystem on Sonnet (single ClaudeCodeAgent session,
-   tool loop, no human patches). Exact cost wasn't captured because
-   the Claude Code session cost JSON was truncated by Bun's stdout
-   buffer, but by inspection (~500-1500 LoC per session, single tool
-   loop, no retries) all four ports landed at ~$0.30-0.80.
-4. Committed on port/resume with `meta-workflow:` prefix naming the
-   workflow.
+Order of precedence the agent actually honors, lowest to highest:
 
-## The scorers failure mode
+  1. `pythonTargetDir` in the workflow input
+  2. Prompt-level prohibitions ("do not read X")
+  3. Example imports in the spec body
+  4. The acceptance contract's Bash commands
 
-The first port of memory shortcut: the agent saw the existing
-hand-coded `smithers_py/memory/`, ran its tests, declared success
-without writing files (0 Write tool calls). Memory v3 fixed this by
-hardening the prompt with explicit prohibitions ("do not read
-`smithers_py/<subsystem>/`") and an acceptance contract (must run
-three specific Bash commands before returning).
+Anything in (3) overrides anything in (1) or (2). The cache run
+confirmed it; the scorers run discovered it.
 
-Scorers exhibited a *different* failure mode: the agent followed the
-prohibition on reading smithers_py/scorers, but then wrote its output
-TO smithers_py/scorers anyway — overwriting the hand-coded version
-despite the explicit `pythonTargetDir: smithers_py_meta/scorers`
-directive. The agent's `appliedPath` reflected the override; the
-working tree confirmed the writes.
+## What got measured vs guessed
 
-Root cause: the spec markdown referenced "`smithers_py.scorers`" in
-its examples. The agent treated the spec's example imports as the
-authoritative target, not the workflow's `pythonTargetDir` input.
+**Measured:** LoC, test pass counts, run IDs, commit shas, the order
+in which the agent honors instructions.
 
-Fix for cache (the next subsystem): rewrote the cache spec to refer
-to `smithers_py_meta.cache` throughout. Cache then landed cleanly at
-the correct meta path. Spec-text alignment beats workflow-input
-authority in the agent's prior.
+**Guessed:** Per-run cost. The Claude Code session emits a
+`total_cost_usd` field on its final `result` event, but Bun's stdout
+pipe truncated the stream before the workflow could persist it. From
+the work envelope (single tool loop, ≤1.5k LoC output, no retries),
+each run is in the $0.30–$0.80 band on Sonnet 4.5 list pricing —
+inside the $1 acceptance bound but not directly observed. Capturing
+the cost field reliably is a known follow-up.
 
-The scorers run was discarded (hand-coded restored from git). To make
-scorers work would require regenerating spec-scorers.md with
-`smithers_py_meta.scorers` references and re-firing — a known fix,
-deferred.
+## Hand-coded vs meta-generated, by the numbers
 
-## Cost compression vs hand-coded
+| Subsystem | Hand-coded LoC | Meta LoC | Hand-coded tests | Meta tests |
+| ---       | ---            | ---      | ---              | ---        |
+| memory    | 1,209          | 1,004    | 18               | 16         |
+| tools     | 1,467          | 450      | 35               | 35         |
+| cache     | 562            | 669      | 18               | 21         |
 
-For three subsystems we have both versions:
+Meta total ~35% smaller in aggregate, driven mostly by tools (the
+meta version omitted defensive helpers the hand-coded version
+carries). Whether that's "leaner" or "missing edge cases" needs a
+functional diff that hasn't been run yet.
 
-| Subsystem | Hand-coded LoC | Meta-generated LoC | Hand-coded tests | Meta tests |
-| --- | --- | --- | --- | --- |
-| memory  | 1,209 | 1,004 | 18 | 16 |
-| tools   | 1,467 | 450  | 35 | 35 |
-| cache   | 562   | 669  | 18 | 21 |
+## Open
 
-The meta versions are leaner on average (1,209+1,467+562 = 3,238 LoC
-hand-coded vs 1,004+450+669 = 2,123 LoC meta; ~35% less). Test count
-roughly equivalent. Both pass independently.
-
-The tools subsystem shows the biggest LoC delta — the meta version
-omitted some defensive code paths and helper functions the
-hand-coded version included. Whether that's "leaner and cleaner" or
-"missing edge cases" needs a functional diff to determine; deferred.
-
-## The cost-per-subsystem unit economics
-
-Each port consumed a single ClaudeCodeAgent session. Bun's stdout
-buffer truncated the Claude Code session cost JSON before the
-workflow could persist it. Estimating from work envelope:
-
-- Per subsystem: ~500-1500 LoC generated, single tool loop with
-  Read/Write/Edit/Bash iterations, no retries.
-- At Sonnet 4.5 rates ($3/MTok in, $15/MTok out), a session with ~10
-  Read calls + 5 Write calls + 2-5 test runs would burn ~30-80k
-  input tokens, ~5-15k output. Cost: $0.20-0.50.
-- Conservative upper bound: $1.00 per subsystem (acceptance criterion
-  #3).
-
-At $0.50/subsystem × 5 subsystems = $2.50 per "full Phase 1 port" for
-a target repo. For maintenance — porting upstream changes monthly —
-that's a small fraction of the cost.
-
-The 1000-repo unit economics test: $0.50 × 5 × 1000 repos × 12
-months = $30k/year operational cost. At $1/repo/month MRR =
-$12k/month = $144k/year. ~80% gross margin. Works.
-
-## What this proves
-
-1. **Smithers can port its own Python twin.** The `port-subsystem-cli`
-   workflow with ClaudeCodeAgent + file tools produces idiomatic
-   Python from a markdown spec, first-run-mergable.
-
-2. **The Cory pattern (one big Task, file tools, cross-file
-   awareness via agent reading what it just wrote) avoids the
-   parallel-fan-out failure mode** (cross-file naming drift) that
-   the API-mode `port-subsystem.tsx` exhibited earlier.
-
-3. **The agent honors prompt instructions but reads spec text as
-   authoritative.** Workflow inputs and prompts can be overridden by
-   strong cues in the spec body. For comparison demos, the spec must
-   reference the target path/namespace consistently.
-
-4. **The unit economics work.** Per-subsystem cost is ≤$1; per-port
-   total is ~$2.50; full-product maintenance over 1000 repos is
-   roughly $30k/year — a tiny fraction of the $144k/year MRR
-   ceiling.
-
-The recursive Smithers→smithers_py port is real. Ship it.
-
-## Open follow-ups
-
-- Re-run scorers with the meta-namespaced spec to close the 5-of-5
-  set.
-- Functional diff: line up `smithers_py.tools` and
-  `smithers_py_meta.tools` side-by-side, identify what the meta
-  version omitted. Same for memory and cache.
-- Wire `cache.by` policy into the runner.py execution path
-  (currently the cache module is standalone — not yet called from
-  tasks).
-- Wire `memory={recall, remember, threadId}` into TaskNode.
+- Re-fire scorers with the meta-namespaced spec. Known fix.
+- Capture the Claude Code session cost field reliably so the cost
+  numbers stop being inferred.
+- Diff hand-coded vs meta for memory / tools / cache — find what the
+  agent omitted.
+- Wire `cache.by` into `runtime/runner.py` and `memory={...}` into
+  `TaskNode`. The modules exist but aren't called from the task
+  execution path yet.
